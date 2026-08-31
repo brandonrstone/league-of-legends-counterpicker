@@ -18,6 +18,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::Message;
@@ -133,8 +135,60 @@ fn is_champ_select(phase: Option<&str>) -> bool {
     phase.is_some_and(|p| p.eq_ignore_ascii_case("ChampSelect"))
 }
 
-fn exit_after_champ_select(app: &AppHandle) {
-    app.exit(0);
+fn show_for_champ_select(app: &AppHandle) {
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.show();
+        let _ = win.unminimize();
+        let _ = win.set_focus();
+    }
+}
+
+fn hide_after_champ_select(app: &AppHandle) {
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.hide();
+    }
+}
+
+fn on_tray_menu(app: &AppHandle, event: tauri::menu::MenuEvent) {
+    match event.id.as_ref() {
+        "show" => show_for_champ_select(app),
+        "quit" => app.exit(0),
+        _ => {}
+    }
+}
+
+fn on_tray_icon(tray: &tauri::tray::TrayIcon, event: TrayIconEvent) {
+    if let TrayIconEvent::DoubleClick {
+        button: MouseButton::Left,
+        ..
+    } = event
+    {
+        show_for_champ_select(tray.app_handle());
+    }
+}
+
+fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
+    let show_i = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
+    let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
+
+    if let Some(tray) = app.tray_by_id("main-tray") {
+        tray.set_menu(Some(menu))?;
+        tray.on_menu_event(on_tray_menu);
+        tray.on_tray_icon_event(on_tray_icon);
+    } else {
+        let mut builder = TrayIconBuilder::with_id("main-tray")
+            .menu(&menu)
+            .show_menu_on_left_click(false)
+            .tooltip("Rift Counterpick")
+            .on_menu_event(on_tray_menu)
+            .on_tray_icon_event(on_tray_icon);
+        if let Some(icon) = app.default_window_icon() {
+            builder = builder.icon(icon.clone());
+        }
+        builder.build(app)?;
+    }
+    Ok(())
 }
 
 fn rescore(db: &StatsDb, inner: &mut InnerState) {
@@ -287,8 +341,7 @@ async fn lcu_loop(app: AppHandle, state: Arc<AppState>) {
                     drop(inner);
                     emit_snapshot(&app, &snap);
                     if leave_select {
-                        exit_after_champ_select(&app);
-                        return;
+                        hide_after_champ_select(&app);
                     }
                 }
                 tokio::time::sleep(Duration::from_millis(1500)).await;
@@ -351,6 +404,7 @@ async fn refresh_from_lcu(app: &AppHandle, state: &Arc<AppState>, client: &LcuHt
 
     let mut inner = state.inner.lock().await;
     let previous_phase = inner.game_phase.clone();
+    let had_draft = inner.draft.is_some();
     inner.lcu.connected = summoner.is_some();
     if let Some(s) = summoner {
         inner.lcu.summoner_name = Some(if s.display_name.is_empty() {
@@ -420,14 +474,19 @@ async fn refresh_from_lcu(app: &AppHandle, state: &Arc<AppState>, client: &LcuHt
         inner.recommendations.clear();
     }
     let snap = inner.snapshot();
+    let enter_select = (!is_champ_select(previous_phase.as_deref())
+        && is_champ_select(inner.game_phase.as_deref()))
+        || (!had_draft && inner.draft.is_some());
     let leave_select = is_champ_select(previous_phase.as_deref())
         && phase
             .as_deref()
             .is_some_and(|p| !p.eq_ignore_ascii_case("ChampSelect"));
     drop(inner);
     emit_snapshot(app, &snap);
-    if leave_select {
-        exit_after_champ_select(app);
+    if enter_select {
+        show_for_champ_select(app);
+    } else if leave_select {
+        hide_after_champ_select(app);
     }
 }
 
@@ -445,6 +504,8 @@ async fn ws_loop(app: AppHandle, state: Arc<AppState>, info: LockfileInfo) {
                     if uri.contains("champ-select") {
                         if let Some(session) = lcu::session_from_value(&data) {
                             let mut inner = state.inner.lock().await;
+                            let enter_select = !is_champ_select(inner.game_phase.as_deref())
+                                && inner.draft.is_none();
                             inner.game_phase = Some("ChampSelect".into());
                             inner.draft = Some(lcu::draft_from_session(
                                 &session,
@@ -454,6 +515,9 @@ async fn ws_loop(app: AppHandle, state: Arc<AppState>, info: LockfileInfo) {
                             let snap = inner.snapshot();
                             drop(inner);
                             emit_snapshot(&app, &snap);
+                            if enter_select {
+                                show_for_champ_select(&app);
+                            }
                         } else if data.is_null() {
                             let mut inner = state.inner.lock().await;
                             let leave_select = is_champ_select(inner.game_phase.as_deref())
@@ -467,8 +531,7 @@ async fn ws_loop(app: AppHandle, state: Arc<AppState>, info: LockfileInfo) {
                             drop(inner);
                             emit_snapshot(&app, &snap);
                             if leave_select {
-                                exit_after_champ_select(&app);
-                                return;
+                                hide_after_champ_select(&app);
                             }
                         }
                     } else if uri.contains("gameflow") {
@@ -486,13 +549,16 @@ async fn ws_loop(app: AppHandle, state: Arc<AppState>, info: LockfileInfo) {
                                 inner.recommendations.clear();
                             }
                             let snap = inner.snapshot();
+                            let enter_select = !is_champ_select(previous_phase.as_deref())
+                                && is_champ_select(Some(phase.as_str()));
                             let leave_select = is_champ_select(previous_phase.as_deref())
                                 && !is_champ_select(Some(phase.as_str()));
                             drop(inner);
                             emit_snapshot(&app, &snap);
-                            if leave_select {
-                                exit_after_champ_select(&app);
-                                return;
+                            if enter_select {
+                                show_for_champ_select(&app);
+                            } else if leave_select {
+                                hide_after_champ_select(&app);
                             }
                         }
                     }
@@ -589,6 +655,7 @@ pub fn run() {
             if let Some(win) = app.get_webview_window("main") {
                 let _ = win.set_always_on_top(settings.always_on_top);
             }
+            setup_tray(app)?;
             let db = StatsDb::open(&app_data.join("stats.sqlite"))?;
             let http = reqwest::Client::builder()
                 .danger_accept_invalid_certs(true)
@@ -634,6 +701,12 @@ pub fn run() {
             update_settings,
             refresh_stats
         ])
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let _ = window.hide();
+                api.prevent_close();
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

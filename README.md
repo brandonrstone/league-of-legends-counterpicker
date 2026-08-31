@@ -12,11 +12,16 @@ Build a real Windows installer once, then launch like any other app:
 2. `npm install`
 3. `npm run build:app`
 4. Run `src-tauri/target/release/bundle/nsis/Rift Counterpick_0.1.0_x64-setup.exe`
-5. Open **Rift Counterpick** from the Start Menu, then pin it to the taskbar.
+5. Open **Rift Counterpick** from the Start Menu.
 
-After that, Node, Vite, and PowerShell are not required. Close any leftover `tauri dev` window first so you are not running two copies.
+The app stays in the **system tray** (near the clock). There is no window until you enter champion select. The overlay pops up for the draft, then hides when the game starts, someone dodges, or the lobby ends.
 
-When you change code later, run `npm run build:app` again and re-run the new setup. It upgrades in place; the taskbar pin stays valid.
+- Title-bar close (X) hides back to the tray; it does not quit.
+- Right-click the tray icon → **Quit** to stop the app. **Show** (or double-click the icon) opens the window if you want settings while idle.
+
+Leave it running between queues so the next champ select is instant. Close any leftover `tauri dev` window first so you are not running two copies.
+
+When you change code later, run `npm run build:app` again and re-run the new setup. It upgrades in place.
 
 ## Develop
 
@@ -26,7 +31,7 @@ Use this only while editing the app (hot reload, console output):
 2. `npm install`
 3. `npm run tauri dev`
 
-Open the League client, then queue. The overlay updates as champions lock. It never auto-picks. Closing the PowerShell window closes the app.
+Open the League client, then queue. The overlay still only appears in champion select. Closing the PowerShell window closes the app.
 
 ## Notes
 
