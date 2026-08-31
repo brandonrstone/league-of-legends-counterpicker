@@ -168,6 +168,7 @@ impl StatsDb {
     }
 
     pub fn role_meta(&self, champion_id: i64, role: &str, rank: &str, patch: &str) -> Option<RoleMeta> {
+        let role = crate::models::lcu_role_to_stats(role);
         let (rank, patch) = self.resolve_stats_key(rank, patch);
         let found = {
             let conn = self.conn.lock().ok()?;
@@ -179,7 +180,7 @@ impl StatsDb {
             )
             .ok()
         };
-        found.or_else(|| self.role_meta_any(champion_id, role))
+        found.or_else(|| self.role_meta_any(champion_id, &role))
     }
 
     fn role_meta_any(&self, champion_id: i64, role: &str) -> Option<RoleMeta> {
@@ -203,9 +204,11 @@ impl StatsDb {
         rank: &str,
         patch: &str,
     ) -> Option<MatchupStat> {
+        let role = crate::models::lcu_role_to_stats(role);
+        let vs_role = crate::models::lcu_role_to_stats(vs_role);
         let (rank, patch) = self.resolve_stats_key(rank, patch);
-        self.matchup_at(champion_id, enemy_id, role, vs_role, &rank, &patch)
-            .or_else(|| self.matchup_any(champion_id, enemy_id, role, vs_role))
+        self.matchup_at(champion_id, enemy_id, &role, &vs_role, &rank, &patch)
+            .or_else(|| self.matchup_any(champion_id, enemy_id, &role, &vs_role))
     }
 
     fn matchup_at(
@@ -329,16 +332,17 @@ impl StatsDb {
     }
 
     pub fn champions_in_role(&self, role: &str, rank: &str, patch: &str) -> Vec<(i64, RoleMeta)> {
+        let role = crate::models::lcu_role_to_stats(role);
         let (rank, patch) = self.resolve_stats_key(rank, patch);
-        let strict = self.query_role_champs(role, &rank, &patch, true);
+        let strict = self.query_role_champs(&role, &rank, &patch, true);
         if !strict.is_empty() {
             return strict;
         }
-        let relaxed = self.query_role_champs(role, &rank, &patch, false);
+        let relaxed = self.query_role_champs(&role, &rank, &patch, false);
         if !relaxed.is_empty() {
             return relaxed;
         }
-        self.query_role_champs_any(role)
+        self.query_role_champs_any(&role)
     }
 
     fn query_role_champs(

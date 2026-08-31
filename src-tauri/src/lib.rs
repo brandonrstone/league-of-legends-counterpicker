@@ -198,7 +198,7 @@ async fn run_ingest(app: AppHandle, state: Arc<AppState>, force: bool) {
     {
         let mut inner = state.inner.lock().await;
         inner.stats.ingesting = true;
-        inner.stats.message = "Downloading champion matchup data".into();
+        inner.stats.message = "Downloading champion matchup data…".into();
         inner.stats.progress = 0.01;
         let snap = inner.snapshot();
         drop(inner);
@@ -377,24 +377,45 @@ async fn refresh_from_lcu(app: &AppHandle, state: &Arc<AppState>, client: &LcuHt
     if !mastery.is_empty() {
         inner.mastery = mastery;
     }
-    if !pickable.is_empty() {
-        inner.pickable = pickable;
-    } else if phase
-        .as_deref()
-        .is_some_and(|p| !p.eq_ignore_ascii_case("ChampSelect"))
-    {
-        inner.pickable.clear();
-    }
     if let Some(session) = session.as_ref() {
         inner.draft = Some(lcu::draft_from_session(
             session,
             &inner.settings.role_override,
         ));
+        if !pickable.is_empty() {
+            let taken: HashSet<i64> = inner
+                .draft
+                .as_ref()
+                .map(|d| {
+                    d.allies
+                        .iter()
+                        .filter_map(|p| {
+                            if p.is_local {
+                                (p.champion_id > 0).then_some(p.champion_id)
+                            } else if p.display_champion_id > 0 {
+                                Some(p.display_champion_id)
+                            } else {
+                                None
+                            }
+                        })
+                        .chain(
+                            d.enemies
+                                .iter()
+                                .filter_map(|p| (p.champion_id > 0).then_some(p.champion_id)),
+                        )
+                        .collect()
+                })
+                .unwrap_or_default();
+            if pickable.iter().any(|id| !taken.contains(id)) {
+                inner.pickable = pickable;
+            }
+        }
         rescore(&state.db, &mut inner);
     } else if phase
         .as_deref()
         .is_some_and(|p| !p.eq_ignore_ascii_case("ChampSelect"))
     {
+        inner.pickable.clear();
         inner.draft = None;
         inner.recommendations.clear();
     }

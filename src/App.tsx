@@ -151,7 +151,11 @@ function StatusBar({ snap, phase }: { snap: AppSnapshot; phase: string }) {
                 : "Loading"
         }
       />
-      <div className="col-span-2 text-[#b9a888]">{snap.stats.message}</div>
+      <div className={`col-span-2 ${snap.stats.ingesting ? "text-gold-2" : "text-[#b9a888]"}`}>
+        {snap.stats.ingesting
+          ? `${snap.stats.message}  ·  ${Math.round(snap.stats.progress * 100)}%`
+          : snap.stats.message}
+      </div>
       {snap.stats.ingesting ? (
         <div className="col-span-2 h-1 overflow-hidden rounded bg-[#1b2c44]">
           <div
@@ -174,6 +178,10 @@ function emptyRecsCopy(snap: AppSnapshot): string {
     /matchup tables|refresh failed|incomplete|cached role/i.test(msg)
   ) {
     return msg || "Matchup tables are missing. Try Refresh stats.";
+  }
+  const alreadyLocked = snap.draft?.allies.some((s) => s.isLocal && s.championId > 0);
+  if (alreadyLocked) {
+    return "No other in-role picks left to rank. Later enemy locks still update this list when stats are ready.";
   }
   return "No in-role picks left that you can still lock. Try another role or turn off Owned only.";
 }

@@ -9,8 +9,7 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 const ROLES: [&str; 5] = ["top", "jungle", "middle", "bottom", "support"];
-const USER_AGENT: &str =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36";
+const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36";
 
 pub struct IngestProgress {
     pub message: String,
@@ -29,7 +28,7 @@ pub async fn ingest_lolalytics(
     db.begin_ingest(rank, &patch)?;
 
     on_progress(IngestProgress {
-        message: format!("Fetching {patch} role tables"),
+        message: format!("Loading {patch} role tables…"),
         progress: 0.02,
     });
 
@@ -76,7 +75,7 @@ pub async fn ingest_lolalytics(
         let loaded = ids.len();
         role_champs.insert((*role).to_string(), ids);
         on_progress(IngestProgress {
-            message: format!("Loaded {loaded} {role} champions"),
+            message: format!("Loaded {loaded} {} champions", role_label(role)),
             progress: 0.05 + 0.05 * (i as f64 / ROLES.len() as f64),
         });
         sleep(Duration::from_millis(120)).await;
@@ -97,8 +96,19 @@ pub async fn ingest_lolalytics(
     let total = jobs.len().max(1);
     for (idx, (role, champ_id, slug)) in jobs.iter().enumerate() {
         let frac = 0.12 + 0.86 * (idx as f64 / total as f64);
+        let name = catalog
+            .by_id
+            .get(champ_id)
+            .map(|c| c.name.as_str())
+            .unwrap_or(slug.as_str());
         on_progress(IngestProgress {
-            message: format!("Matchups {slug} {role} ({}/{})", idx + 1, total),
+            message: format!(
+                "Calculating matchups… {} {} ({}/{})",
+                name,
+                role_label(role),
+                idx + 1,
+                total
+            ),
             progress: frac,
         });
 
@@ -113,14 +123,19 @@ pub async fn ingest_lolalytics(
         let mut stored_matchups = 0usize;
         for vs_role in ROLES {
             if let Ok(payload) = fetch_counters(client, slug, role, vs_role, &tier, &patch).await {
-                stored_matchups += store_counter_json(db, champ_id, role, vs_role, rank, &patch, &payload)?;
+                stored_matchups +=
+                    store_counter_json(db, champ_id, role, vs_role, rank, &patch, &payload)?;
             }
         }
         if stored_matchups == 0 {
             if let Ok(html) = fetch_build_html(client, slug, role, &tier).await {
                 if let Some(tables) = qwik::parse_enemy_matchups(&html) {
                     for (lane, row) in tables.all_rows() {
-                        let kind = if lane == role.as_str() { "lane" } else { "team" };
+                        let kind = if lane == role.as_str() {
+                            "lane"
+                        } else {
+                            "team"
+                        };
                         db.upsert_matchup(
                             *champ_id,
                             row.champion_id,
@@ -157,6 +172,17 @@ pub async fn ingest_lolalytics(
     Ok(patch)
 }
 
+fn role_label(role: &str) -> &str {
+    match role {
+        "top" => "Top",
+        "jungle" => "Jungle",
+        "middle" => "Mid",
+        "bottom" => "ADC",
+        "support" => "Support",
+        other => other,
+    }
+}
+
 fn lolalytics_tier(rank: &str) -> String {
     match rank {
         "emerald" => "emerald_plus".into(),
@@ -167,7 +193,12 @@ fn lolalytics_tier(rank: &str) -> String {
     }
 }
 
-async fn fetch_list(client: &reqwest::Client, patch: &str, role: &str, rank: &str) -> Result<Value> {
+async fn fetch_list(
+    client: &reqwest::Client,
+    patch: &str,
+    role: &str,
+    rank: &str,
+) -> Result<Value> {
     let with_patch = format!(
         "https://a1.lolalytics.com/mega/?ep=list&v=1&patch={}&lane={}&tier={}&queue=ranked&region=all",
         urlencoding::encode(patch),
@@ -463,5 +494,12 @@ mod tests {
         assert_eq!(lolalytics_tier("emerald"), "emerald_plus");
         assert_eq!(lolalytics_tier("diamond"), "diamond_plus");
         assert_eq!(lolalytics_tier("platinum_plus"), "platinum_plus");
+    }
+
+    #[test]
+    fn role_label_uses_display_names() {
+        assert_eq!(role_label("bottom"), "ADC");
+        assert_eq!(role_label("middle"), "Mid");
+        assert_eq!(role_label("support"), "Support");
     }
 }

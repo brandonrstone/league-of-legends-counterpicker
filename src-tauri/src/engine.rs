@@ -37,7 +37,8 @@ pub fn recommend(
     draft: &DraftView,
     ctx: &ScoreContext,
 ) -> Vec<Recommendation> {
-    let role = draft.role.as_str();
+    let role_owned = crate::models::lcu_role_to_stats(&draft.role);
+    let role = role_owned.as_str();
     let banned: HashSet<i64> = draft.bans.iter().copied().filter(|id| *id > 0).collect();
     let taken: HashSet<i64> = draft
         .allies
@@ -92,30 +93,17 @@ pub fn recommend(
     let weights = weights(lane_enemy_id.is_some(), locked_enemies.len());
     let mut scored = Vec::new();
 
-    let mut candidates: HashSet<i64> = db
+    let pool: HashSet<i64> = db
         .champions_in_role(role, &ctx.rank, &ctx.patch)
         .into_iter()
         .map(|(id, _)| id)
         .collect();
+    let mut candidates = pool.clone();
     if !ctx.pickable.is_empty() {
-        let filtered: HashSet<i64> = candidates
-            .iter()
-            .copied()
-            .filter(|id| ctx.pickable.contains(id))
-            .collect();
-        if !filtered.is_empty() {
-            candidates = filtered;
-        }
+        candidates = soft_filter(&pool, &ctx.pickable, &banned, &taken, catalog);
     }
     if ctx.owned_only && !ctx.owned.is_empty() {
-        let filtered: HashSet<i64> = candidates
-            .iter()
-            .copied()
-            .filter(|id| ctx.owned.contains(id))
-            .collect();
-        if !filtered.is_empty() {
-            candidates = filtered;
-        }
+        candidates = soft_filter(&candidates, &ctx.owned, &banned, &taken, catalog);
     }
 
     for champ_id in candidates {
@@ -231,9 +219,41 @@ pub fn recommend(
     scored.into_iter().map(|s| s.rec).collect()
 }
 
+fn still_lockable(
+    id: i64,
+    banned: &HashSet<i64>,
+    taken: &HashSet<i64>,
+    catalog: &Catalog,
+) -> bool {
+    id > 0 && !banned.contains(&id) && !taken.contains(&id) && catalog.by_id.contains_key(&id)
+}
+
+fn soft_filter(
+    pool: &HashSet<i64>,
+    filter: &HashSet<i64>,
+    banned: &HashSet<i64>,
+    taken: &HashSet<i64>,
+    catalog: &Catalog,
+) -> HashSet<i64> {
+    let filtered: HashSet<i64> = pool
+        .iter()
+        .copied()
+        .filter(|id| filter.contains(id))
+        .collect();
+    if filtered
+        .iter()
+        .any(|id| still_lockable(*id, banned, taken, catalog))
+    {
+        filtered
+    } else {
+        pool.clone()
+    }
+}
+
 fn resolve_role(db: &StatsDb, champion_id: i64, assigned: &str, ctx: &ScoreContext) -> String {
+    let assigned = crate::models::lcu_role_to_stats(assigned);
     if !assigned.is_empty() {
-        return assigned.to_string();
+        return assigned;
     }
     db.primary_role(champion_id, &ctx.rank, &ctx.patch)
         .unwrap_or_default()
@@ -373,6 +393,10 @@ mod tests {
     const TWITCH: i64 = 29;
     const BRAUM: i64 = 201;
     const SEJUANI: i64 = 113;
+    const JANNA: i64 = 40;
+    const NAMI: i64 = 267;
+    const LULU: i64 = 117;
+    const THRESH: i64 = 412;
 
     fn champ(id: i64, name: &str) -> ChampionInfo {
         ChampionInfo {
@@ -393,6 +417,10 @@ mod tests {
             champ(TWITCH, "Twitch"),
             champ(BRAUM, "Braum"),
             champ(SEJUANI, "Sejuani"),
+            champ(JANNA, "Janna"),
+            champ(NAMI, "Nami"),
+            champ(LULU, "Lulu"),
+            champ(THRESH, "Thresh"),
         ];
         let mut catalog = Catalog {
             patch: PATCH.to_string(),
@@ -452,6 +480,79 @@ mod tests {
             .unwrap();
         db.upsert_role_stat(SINGED, "top", RANK, PATCH, &off_role_meta())
             .unwrap();
+    }
+
+    fn support_meta(winrate: f64, games: i64) -> RoleMeta {
+        RoleMeta {
+            winrate,
+            pickrate: 10.0,
+            banrate: 1.0,
+            games,
+            pct_lane: 92.0,
+            default_lane: "support".into(),
+        }
+    }
+
+    fn seed_support_pool(db: &StatsDb) {
+        db.upsert_role_stat(JANNA, "support", RANK, PATCH, &support_meta(51.0, 12_000))
+            .unwrap();
+        db.upsert_role_stat(NAMI, "support", RANK, PATCH, &support_meta(50.8, 11_000))
+            .unwrap();
+        db.upsert_role_stat(LULU, "support", RANK, PATCH, &support_meta(51.2, 10_500))
+            .unwrap();
+        db.upsert_role_stat(THRESH, "support", RANK, PATCH, &support_meta(50.4, 11_200))
+            .unwrap();
+        db.upsert_role_stat(BRAUM, "support", RANK, PATCH, &support_meta(51.6, 10_800))
+            .unwrap();
+    }
+
+    fn support_lane_mu(db: &StatsDb, champ: i64, enemy: i64, wr: f64) {
+        db.upsert_matchup(
+            champ,
+            enemy,
+            "support",
+            "lane",
+            "support",
+            RANK,
+            PATCH,
+            &MatchupStat {
+                winrate: wr,
+                games: 8_000,
+                delta: wr - 50.0,
+            },
+        )
+        .unwrap();
+    }
+
+    fn local_locked_support(local_id: i64, enemy_id: i64) -> DraftView {
+        DraftView {
+            role: "support".into(),
+            allies: vec![
+                PlayerSlot {
+                    is_local: true,
+                    champion_id: local_id,
+                    display_champion_id: local_id,
+                    assigned_position: "support".into(),
+                    ..Default::default()
+                },
+                PlayerSlot {
+                    is_local: false,
+                    champion_id: TWITCH,
+                    display_champion_id: TWITCH,
+                    assigned_position: "bottom".into(),
+                    ..Default::default()
+                },
+            ],
+            enemies: vec![PlayerSlot {
+                champion_id: enemy_id,
+                assigned_position: "support".into(),
+                display_champion_id: enemy_id,
+                ..Default::default()
+            }],
+            enemies_locked: 1,
+            lane_enemy_id: Some(enemy_id),
+            ..Default::default()
+        }
     }
 
     fn ctx_with_pickable(ids: &[i64]) -> ScoreContext {
@@ -939,5 +1040,93 @@ mod tests {
         };
         let recs = recommend(&db, &catalog, &empty_draft(), &ctx);
         assert!(!recs.is_empty(), "should use fallback stats key: {recs:?}");
+    }
+
+    #[test]
+    fn nami_lock_surfaces_thresh_for_support() {
+        let db = StatsDb::open_memory().unwrap();
+        seed_support_pool(&db);
+        support_lane_mu(&db, THRESH, NAMI, 55.0);
+        support_lane_mu(&db, LULU, NAMI, 47.0);
+        support_lane_mu(&db, JANNA, NAMI, 48.0);
+        let catalog = test_catalog();
+        let ctx = ctx_with_pickable(&[THRESH, LULU, JANNA, BRAUM]);
+        let recs = recommend(
+            &db,
+            &catalog,
+            &DraftView {
+                role: "support".into(),
+                enemies: vec![PlayerSlot {
+                    champion_id: NAMI,
+                    assigned_position: "support".into(),
+                    display_champion_id: NAMI,
+                    ..Default::default()
+                }],
+                enemies_locked: 1,
+                lane_enemy_id: Some(NAMI),
+                ..Default::default()
+            },
+            &ctx,
+        );
+        assert!(!recs.is_empty());
+        assert_eq!(
+            recs[0].champion_id, THRESH,
+            "Thresh should lead vs Nami: {recs:?}"
+        );
+        assert!(
+            recs[0].reason.contains("Nami"),
+            "reason should name Nami: {}",
+            recs[0].reason
+        );
+    }
+
+    #[test]
+    fn local_support_lock_does_not_empty_recs() {
+        let db = StatsDb::open_memory().unwrap();
+        seed_support_pool(&db);
+        support_lane_mu(&db, THRESH, NAMI, 54.0);
+        support_lane_mu(&db, LULU, NAMI, 52.0);
+        let catalog = test_catalog();
+        let ctx = ctx_with_pickable(&[JANNA]);
+        let recs = recommend(&db, &catalog, &local_locked_support(JANNA, NAMI), &ctx);
+        assert!(
+            !recs.is_empty(),
+            "after locking Janna, other supports must still rank: {recs:?}"
+        );
+        assert!(
+            recs.iter().all(|r| r.champion_id != JANNA),
+            "locked local Janna should not be recommended: {recs:?}"
+        );
+    }
+
+    #[test]
+    fn utility_role_alias_still_recommends_supports() {
+        let db = StatsDb::open_memory().unwrap();
+        seed_support_pool(&db);
+        let catalog = test_catalog();
+        let ctx = ctx_with_pickable(&[THRESH, LULU, JANNA]);
+        let recs = recommend(
+            &db,
+            &catalog,
+            &DraftView {
+                role: "utility".into(),
+                enemies: vec![PlayerSlot {
+                    champion_id: NAMI,
+                    assigned_position: "utility".into(),
+                    display_champion_id: NAMI,
+                    ..Default::default()
+                }],
+                enemies_locked: 1,
+                ..Default::default()
+            },
+            &ctx,
+        );
+        assert!(
+            !recs.is_empty(),
+            "LCU utility must map to support stats: {recs:?}"
+        );
+        assert!(recs.iter().all(|r| {
+            r.champion_id == THRESH || r.champion_id == LULU || r.champion_id == JANNA || r.champion_id == BRAUM
+        }));
     }
 }
