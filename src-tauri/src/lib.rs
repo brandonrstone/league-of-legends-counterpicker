@@ -162,7 +162,7 @@ fn rescore(db: &StatsDb, inner: &mut InnerState) {
 }
 
 async fn run_ingest(app: AppHandle, state: Arc<AppState>, force: bool) {
-    let (rank, patch, already_fresh) = {
+    let (rank, patch, already_fresh, matchups) = {
         let inner = state.inner.lock().await;
         let Some(catalog) = inner.catalog.as_ref() else {
             return;
@@ -171,7 +171,8 @@ async fn run_ingest(app: AppHandle, state: Arc<AppState>, force: bool) {
             .settings
             .resolved_rank(inner.lcu.detected_rank.as_deref());
         let fresh = cache_is_fresh(&state.db, &rank, &catalog.patch);
-        (rank, catalog.patch.clone(), fresh)
+        let matchups = state.db.has_matchup_data(&rank, &catalog.patch);
+        (rank, catalog.patch.clone(), fresh, matchups)
     };
     if already_fresh && !force {
         let mut inner = state.inner.lock().await;
@@ -181,7 +182,11 @@ async fn run_ingest(app: AppHandle, state: Arc<AppState>, force: bool) {
             stale: false,
             patch: Some(patch),
             source: "lolalytics".into(),
-            message: "Stats cache is current".into(),
+            message: if matchups {
+                "Stats cache is current".into()
+            } else {
+                "Role stats cached; matchup tables missing — try Refresh stats".into()
+            },
             progress: 1.0,
         };
         let snap = inner.snapshot();
@@ -220,30 +225,38 @@ async fn run_ingest(app: AppHandle, state: Arc<AppState>, force: bool) {
     let mut inner = state.inner.lock().await;
     match db_result {
         Ok(p) => {
+            let matchups_ok = state.db.has_matchup_data(&rank, &p);
             inner.stats = StatsStatus {
                 ready: true,
                 ingesting: false,
                 stale: false,
                 patch: Some(p),
                 source: "lolalytics".into(),
-                message: "Live stats ready".into(),
+                message: if matchups_ok {
+                    "Live stats ready".into()
+                } else {
+                    "Role stats ready; matchup tables incomplete — try Refresh stats".into()
+                },
                 progress: 1.0,
             };
         }
         Err(err) => {
-            let stale = state.db.has_patch_data(&rank, &patch);
+            let roles = state.db.has_patch_data(&rank, &patch) || state.db.has_any_role_data();
+            let matchups_ok = state.db.has_matchup_data(&rank, &patch);
             inner.stats = StatsStatus {
-                ready: stale,
+                ready: roles,
                 ingesting: false,
-                stale,
-                patch: if stale { Some(patch) } else { None },
+                stale: roles,
+                patch: if roles { Some(patch) } else { None },
                 source: "lolalytics".into(),
-                message: if stale {
+                message: if roles && matchups_ok {
                     "Using cached stats; refresh failed".into()
+                } else if roles {
+                    "Using cached role stats; matchup tables missing — refresh failed".into()
                 } else {
                     format!("Could not refresh stats: {err}")
                 },
-                progress: if stale { 1.0 } else { 0.0 },
+                progress: if roles { 1.0 } else { 0.0 },
             };
         }
     }

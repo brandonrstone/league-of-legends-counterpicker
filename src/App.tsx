@@ -164,6 +164,20 @@ function StatusBar({ snap, phase }: { snap: AppSnapshot; phase: string }) {
   );
 }
 
+function emptyRecsCopy(snap: AppSnapshot): string {
+  const msg = snap.stats.message.trim();
+  if (snap.stats.ingesting || !snap.stats.ready) {
+    return msg || "Waiting for matchup stats to finish loading…";
+  }
+  if (
+    snap.stats.stale ||
+    /matchup tables|refresh failed|incomplete|cached role/i.test(msg)
+  ) {
+    return msg || "Matchup tables are missing. Try Refresh stats.";
+  }
+  return "No in-role picks left that you can still lock. Try another role or turn off Owned only.";
+}
+
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div>
@@ -235,9 +249,7 @@ function DraftBoard({
         <div className="flex flex-col gap-2">
           {snap.recommendations.length === 0 ? (
             <div className="hex-frame rounded-sm bg-[#0c1828]/80 p-4 text-sm text-[#cbb892]">
-              {snap.stats.ready
-                ? "No in-role picks left that you can still lock. Try another role or turn off Owned only."
-                : "Waiting for matchup stats to finish loading…"}
+              {emptyRecsCopy(snap)}
             </div>
           ) : (
             snap.recommendations.map((rec, i) => (

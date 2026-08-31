@@ -42,8 +42,15 @@ pub fn recommend(
     let taken: HashSet<i64> = draft
         .allies
         .iter()
-        .filter(|p| !p.is_local && p.display_champion_id > 0)
-        .map(|p| p.display_champion_id)
+        .filter_map(|p| {
+            if p.is_local {
+                (p.champion_id > 0).then_some(p.champion_id)
+            } else if p.display_champion_id > 0 {
+                Some(p.display_champion_id)
+            } else {
+                None
+            }
+        })
         .chain(
             draft
                 .enemies
@@ -63,11 +70,16 @@ pub fn recommend(
             )
         })
         .collect();
-    let locked_allies: Vec<i64> = draft
+    let locked_allies: Vec<(i64, String)> = draft
         .allies
         .iter()
         .filter(|p| !p.is_local && p.display_champion_id > 0)
-        .map(|p| p.display_champion_id)
+        .map(|p| {
+            (
+                p.display_champion_id,
+                resolve_role(db, p.display_champion_id, &p.assigned_position, ctx),
+            )
+        })
         .collect();
 
     let lane_enemy_id = draft.lane_enemy_id.or_else(|| {
@@ -140,13 +152,25 @@ pub fn recommend(
             None
         };
 
-        let mut syn_deltas = Vec::new();
-        for ally in &locked_allies {
-            if let Some(stat) = db.synergy(champ_id, *ally, &ctx.rank, &ctx.patch) {
-                syn_deltas.push(shrunk_delta(&stat));
+        let mut syn_weight_sum = 0.0;
+        let mut syn_delta_sum = 0.0;
+        let mut best_ally: Option<(i64, f64)> = None;
+        for (ally_id, ally_role) in &locked_allies {
+            if let Some(stat) = db.synergy(champ_id, *ally_id, &ctx.rank, &ctx.patch) {
+                let w = ally_role_weight(role, ally_role);
+                let delta = shrunk_delta(&stat);
+                syn_delta_sum += w * delta;
+                syn_weight_sum += w;
+                if best_ally.map(|(_, d)| delta > d).unwrap_or(true) {
+                    best_ally = Some((*ally_id, delta));
+                }
             }
         }
-        let synergy_delta = mean(&syn_deltas);
+        let synergy_delta = if syn_weight_sum > 0.0 {
+            Some(syn_delta_sum / syn_weight_sum)
+        } else {
+            None
+        };
 
         let flex = db
             .flexibility(champ_id, role, &ctx.rank, &ctx.patch)
@@ -173,7 +197,7 @@ pub fn recommend(
             lane_enemy_id,
             team_delta,
             synergy_delta,
-            locked_allies.first().copied(),
+            best_ally.map(|(id, _)| id),
             meta_wr,
             locked_enemies.len(),
         );
@@ -218,29 +242,29 @@ fn resolve_role(db: &StatsDb, champion_id: i64, assigned: &str, ctx: &ScoreConte
 fn weights(lane_known: bool, enemies_known: usize) -> Weights {
     if lane_known {
         Weights {
-            lane: 0.50,
-            team: 0.22,
-            syn: 0.10,
-            meta: 0.15,
-            flex: 0.03,
+            lane: 0.45,
+            team: 0.20,
+            syn: 0.25,
+            meta: 0.10,
+            flex: 0.00,
             comfort: 0.00,
         }
     } else if enemies_known > 0 {
         Weights {
             lane: 0.0,
             team: 0.40,
-            syn: 0.20,
+            syn: 0.25,
             meta: 0.25,
-            flex: 0.10,
+            flex: 0.05,
             comfort: 0.05,
         }
     } else {
         Weights {
             lane: 0.0,
             team: 0.10,
-            syn: 0.15,
-            meta: 0.45,
-            flex: 0.25,
+            syn: 0.20,
+            meta: 0.50,
+            flex: 0.15,
             comfort: 0.05,
         }
     }
@@ -248,13 +272,25 @@ fn weights(lane_known: bool, enemies_known: usize) -> Weights {
 
 fn vs_role_weight(our_role: &str, vs_role: &str) -> f64 {
     if vs_role.is_empty() {
-        0.15
+        0.20
     } else if our_role == vs_role {
         1.0
     } else if is_duo_lane(our_role, vs_role) {
         0.45
     } else {
-        0.15
+        0.20
+    }
+}
+
+fn ally_role_weight(our_role: &str, ally_role: &str) -> f64 {
+    if is_duo_lane(our_role, ally_role) {
+        1.0
+    } else if ally_role == "jungle" {
+        0.35
+    } else if ally_role.is_empty() {
+        0.25
+    } else {
+        0.25
     }
 }
 
@@ -269,14 +305,6 @@ pub fn shrink(wr: f64, games: i64) -> f64 {
 
 fn shrunk_delta(stat: &MatchupStat) -> f64 {
     shrink(stat.winrate, stat.games) - 50.0
-}
-
-fn mean(values: &[f64]) -> Option<f64> {
-    if values.is_empty() {
-        None
-    } else {
-        Some(values.iter().sum::<f64>() / values.len() as f64)
-    }
 }
 
 fn comfort_score(mastery: Option<(i64, i64)>) -> f64 {
@@ -342,6 +370,9 @@ mod tests {
     const CAITLYN: i64 = 51;
     const SINGED: i64 = 27;
     const MISS_FORTUNE: i64 = 21;
+    const TWITCH: i64 = 29;
+    const BRAUM: i64 = 201;
+    const SEJUANI: i64 = 113;
 
     fn champ(id: i64, name: &str) -> ChampionInfo {
         ChampionInfo {
@@ -359,6 +390,9 @@ mod tests {
             champ(CAITLYN, "Caitlyn"),
             champ(SINGED, "Singed"),
             champ(MISS_FORTUNE, "Miss Fortune"),
+            champ(TWITCH, "Twitch"),
+            champ(BRAUM, "Braum"),
+            champ(SEJUANI, "Sejuani"),
         ];
         let mut catalog = Catalog {
             patch: PATCH.to_string(),
@@ -412,6 +446,8 @@ mod tests {
             &bot_meta(50.2, 10_000, 90.0),
         )
         .unwrap();
+        db.upsert_role_stat(TWITCH, "bottom", RANK, PATCH, &bot_meta(51.4, 11_500, 94.0))
+            .unwrap();
         db.upsert_role_stat(SINGED, "bottom", RANK, PATCH, &off_role_meta())
             .unwrap();
         db.upsert_role_stat(SINGED, "top", RANK, PATCH, &off_role_meta())
@@ -573,8 +609,8 @@ mod tests {
         assert_eq!(vs_role_weight("bottom", "bottom"), 1.0);
         assert_eq!(vs_role_weight("bottom", "support"), 0.45);
         assert_eq!(vs_role_weight("support", "bottom"), 0.45);
-        assert_eq!(vs_role_weight("bottom", "top"), 0.15);
-        assert_eq!(vs_role_weight("bottom", ""), 0.15);
+        assert_eq!(vs_role_weight("bottom", "top"), 0.20);
+        assert_eq!(vs_role_weight("bottom", ""), 0.20);
     }
 
     #[test]
@@ -698,5 +734,210 @@ mod tests {
             recs.iter().all(|r| r.champion_id != JINX),
             "hovered ally Jinx should be treated as taken: {recs:?}"
         );
+    }
+
+    fn lane_mu(db: &StatsDb, champ: i64, enemy: i64, wr: f64) {
+        db.upsert_matchup(
+            champ,
+            enemy,
+            "bottom",
+            "lane",
+            "bottom",
+            RANK,
+            PATCH,
+            &MatchupStat {
+                winrate: wr,
+                games: 8_000,
+                delta: wr - 50.0,
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn jinx_lock_surfaces_twitch_immediately() {
+        let db = StatsDb::open_memory().unwrap();
+        seed_adc_pool(&db);
+        lane_mu(&db, TWITCH, JINX, 55.0);
+        lane_mu(&db, MISS_FORTUNE, JINX, 47.0);
+        lane_mu(&db, CAITLYN, JINX, 48.0);
+        let catalog = test_catalog();
+        let ctx = ctx_with_pickable(&[TWITCH, MISS_FORTUNE, CAITLYN, SINGED]);
+        let recs = recommend(&db, &catalog, &enemy_adc(JINX), &ctx);
+        assert!(!recs.is_empty());
+        assert_eq!(recs[0].champion_id, TWITCH, "Twitch should lead vs Jinx: {recs:?}");
+        assert!(
+            recs[0].reason.contains("Jinx"),
+            "reason should name Jinx: {}",
+            recs[0].reason
+        );
+    }
+
+    #[test]
+    fn later_enemy_that_beats_twitch_drops_him() {
+        let db = StatsDb::open_memory().unwrap();
+        seed_adc_pool(&db);
+        lane_mu(&db, TWITCH, JINX, 55.0);
+        lane_mu(&db, MISS_FORTUNE, JINX, 51.0);
+        db.upsert_matchup(
+            TWITCH,
+            SEJUANI,
+            "bottom",
+            "team",
+            "jungle",
+            RANK,
+            PATCH,
+            &MatchupStat {
+                winrate: 40.0,
+                games: 6_000,
+                delta: -10.0,
+            },
+        )
+        .unwrap();
+        db.upsert_matchup(
+            MISS_FORTUNE,
+            SEJUANI,
+            "bottom",
+            "team",
+            "jungle",
+            RANK,
+            PATCH,
+            &MatchupStat {
+                winrate: 52.0,
+                games: 6_000,
+                delta: 2.0,
+            },
+        )
+        .unwrap();
+        let catalog = test_catalog();
+        let ctx = ctx_with_pickable(&[TWITCH, MISS_FORTUNE]);
+        let jinx_only = recommend(&db, &catalog, &enemy_adc(JINX), &ctx);
+        let both = recommend(
+            &db,
+            &catalog,
+            &DraftView {
+                role: "bottom".into(),
+                enemies: vec![
+                    PlayerSlot {
+                        champion_id: JINX,
+                        assigned_position: "bottom".into(),
+                        display_champion_id: JINX,
+                        ..Default::default()
+                    },
+                    PlayerSlot {
+                        champion_id: SEJUANI,
+                        assigned_position: "jungle".into(),
+                        display_champion_id: SEJUANI,
+                        ..Default::default()
+                    },
+                ],
+                enemies_locked: 2,
+                lane_enemy_id: Some(JINX),
+                ..Default::default()
+            },
+            &ctx,
+        );
+        let twitch_jinx = jinx_only.iter().position(|r| r.champion_id == TWITCH);
+        let twitch_both = both.iter().position(|r| r.champion_id == TWITCH);
+        let mf_both = both.iter().position(|r| r.champion_id == MISS_FORTUNE);
+        assert!(twitch_jinx.is_some() && twitch_both.is_some() && mf_both.is_some());
+        assert!(
+            twitch_jinx.unwrap() <= twitch_both.unwrap(),
+            "Twitch should not rise after a bad team matchup"
+        );
+        assert!(
+            mf_both.unwrap() < twitch_both.unwrap(),
+            "MF should outrank Twitch once Sejuani is in: {both:?}"
+        );
+    }
+
+    #[test]
+    fn braum_synergy_raises_twitch() {
+        let db = StatsDb::open_memory().unwrap();
+        seed_adc_pool(&db);
+        lane_mu(&db, TWITCH, JINX, 52.0);
+        lane_mu(&db, MISS_FORTUNE, JINX, 51.5);
+        db.upsert_synergy(
+            TWITCH,
+            BRAUM,
+            RANK,
+            PATCH,
+            &MatchupStat {
+                winrate: 54.0,
+                games: 9_000,
+                delta: 4.0,
+            },
+        )
+        .unwrap();
+        db.upsert_synergy(
+            MISS_FORTUNE,
+            BRAUM,
+            RANK,
+            PATCH,
+            &MatchupStat {
+                winrate: 50.0,
+                games: 9_000,
+                delta: 0.0,
+            },
+        )
+        .unwrap();
+        let catalog = test_catalog();
+        let ctx = ctx_with_pickable(&[TWITCH, MISS_FORTUNE]);
+        let with_braum = DraftView {
+            role: "bottom".into(),
+            allies: vec![PlayerSlot {
+                is_local: false,
+                display_champion_id: BRAUM,
+                assigned_position: "support".into(),
+                ..Default::default()
+            }],
+            enemies: vec![PlayerSlot {
+                champion_id: JINX,
+                assigned_position: "bottom".into(),
+                display_champion_id: JINX,
+                ..Default::default()
+            }],
+            enemies_locked: 1,
+            lane_enemy_id: Some(JINX),
+            ..Default::default()
+        };
+        let recs = recommend(&db, &catalog, &with_braum, &ctx);
+        assert_eq!(recs[0].champion_id, TWITCH, "Braum synergy should put Twitch first: {recs:?}");
+        assert!(
+            recs[0].reason.contains("Braum") || recs[0].synergy_delta.is_some(),
+            "reason should mention Braum: {}",
+            recs[0].reason
+        );
+    }
+
+    #[test]
+    fn role_stats_without_matchups_still_recommend() {
+        let db = StatsDb::open_memory().unwrap();
+        seed_adc_pool(&db);
+        let catalog = test_catalog();
+        let ctx = ctx_with_pickable(&[TWITCH, MISS_FORTUNE, CAITLYN]);
+        let recs = recommend(&db, &catalog, &enemy_adc(JINX), &ctx);
+        assert!(
+            !recs.is_empty(),
+            "meta-only cache must still produce ADC recs"
+        );
+    }
+
+    #[test]
+    fn mismatched_rank_patch_falls_back_to_cached_stats() {
+        let db = StatsDb::open_memory().unwrap();
+        seed_adc_pool(&db);
+        let catalog = test_catalog();
+        let ctx = ScoreContext {
+            rank: "gold_plus".into(),
+            patch: "16.17".into(),
+            owned_only: false,
+            comfort_weighting: false,
+            pickable: HashSet::new(),
+            owned: HashSet::new(),
+            mastery: HashMap::new(),
+        };
+        let recs = recommend(&db, &catalog, &empty_draft(), &ctx);
+        assert!(!recs.is_empty(), "should use fallback stats key: {recs:?}");
     }
 }

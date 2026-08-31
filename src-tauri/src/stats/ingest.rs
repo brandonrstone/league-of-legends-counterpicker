@@ -25,6 +25,7 @@ pub async fn ingest_lolalytics(
     mut on_progress: impl FnMut(IngestProgress),
 ) -> Result<String> {
     let patch = catalog.patch.clone();
+    let tier = lolalytics_tier(rank);
     db.begin_ingest(rank, &patch)?;
 
     on_progress(IngestProgress {
@@ -34,7 +35,7 @@ pub async fn ingest_lolalytics(
 
     let mut role_champs: HashMap<String, Vec<i64>> = HashMap::new();
     for (i, role) in ROLES.iter().enumerate() {
-        let list = fetch_list(client, &patch, role, rank).await?;
+        let list = fetch_list(client, &patch, role, &tier).await?;
         let mut ids = Vec::new();
         if let Some(cid_map) = list.get("cid").and_then(|v| v.as_object()) {
             for (id_str, stats) in cid_map {
@@ -101,7 +102,7 @@ pub async fn ingest_lolalytics(
             progress: frac,
         });
 
-        if let Ok(team) = fetch_team(client, &patch, slug, role, rank).await {
+        if let Ok(team) = fetch_team(client, &patch, slug, role, &tier).await {
             if let Some(team_map) = team.get("team").and_then(|v| v.as_object()) {
                 for (_lane, rows) in team_map {
                     store_rows(db, champ_id, role, "synergy", rank, &patch, rows, true)?;
@@ -109,24 +110,32 @@ pub async fn ingest_lolalytics(
             }
         }
 
-        if let Ok(html) = fetch_build_html(client, slug, role, rank).await {
-            if let Some(tables) = qwik::parse_enemy_matchups(&html) {
-                for (lane, row) in tables.all_rows() {
-                    let kind = if lane == role.as_str() { "lane" } else { "team" };
-                    db.upsert_matchup(
-                        *champ_id,
-                        row.champion_id,
-                        role,
-                        kind,
-                        lane,
-                        rank,
-                        &patch,
-                        &MatchupStat {
-                            winrate: row.winrate,
-                            games: row.games,
-                            delta: row.delta,
-                        },
-                    )?;
+        let mut stored_matchups = 0usize;
+        for vs_role in ROLES {
+            if let Ok(payload) = fetch_counters(client, slug, role, vs_role, &tier, &patch).await {
+                stored_matchups += store_counter_json(db, champ_id, role, vs_role, rank, &patch, &payload)?;
+            }
+        }
+        if stored_matchups == 0 {
+            if let Ok(html) = fetch_build_html(client, slug, role, &tier).await {
+                if let Some(tables) = qwik::parse_enemy_matchups(&html) {
+                    for (lane, row) in tables.all_rows() {
+                        let kind = if lane == role.as_str() { "lane" } else { "team" };
+                        db.upsert_matchup(
+                            *champ_id,
+                            row.champion_id,
+                            role,
+                            kind,
+                            lane,
+                            rank,
+                            &patch,
+                            &MatchupStat {
+                                winrate: row.winrate,
+                                games: row.games,
+                                delta: row.delta,
+                            },
+                        )?;
+                    }
                 }
             }
         }
@@ -148,14 +157,34 @@ pub async fn ingest_lolalytics(
     Ok(patch)
 }
 
+fn lolalytics_tier(rank: &str) -> String {
+    match rank {
+        "emerald" => "emerald_plus".into(),
+        "diamond" => "diamond_plus".into(),
+        "platinum" => "platinum_plus".into(),
+        "gold" => "gold_plus".into(),
+        other => other.to_string(),
+    }
+}
+
 async fn fetch_list(client: &reqwest::Client, patch: &str, role: &str, rank: &str) -> Result<Value> {
-    let url = format!(
+    let with_patch = format!(
         "https://a1.lolalytics.com/mega/?ep=list&v=1&patch={}&lane={}&tier={}&queue=ranked&region=all",
         urlencoding::encode(patch),
         urlencoding::encode(role),
         urlencoding::encode(rank)
     );
-    get_json(client, &url).await
+    let without_patch = format!(
+        "https://a1.lolalytics.com/mega/?ep=list&v=1&lane={}&tier={}&queue=ranked&region=all",
+        urlencoding::encode(role),
+        urlencoding::encode(rank)
+    );
+    if let Ok(value) = get_json(client, &with_patch).await {
+        if value.get("cid").is_some() {
+            return Ok(value);
+        }
+    }
+    get_json(client, &without_patch).await
 }
 
 async fn fetch_team(
@@ -165,14 +194,120 @@ async fn fetch_team(
     role: &str,
     rank: &str,
 ) -> Result<Value> {
-    let url = format!(
+    let with_patch = format!(
         "https://a1.lolalytics.com/mega/?ep=build-team&v=1&patch={}&c={}&lane={}&tier={}&queue=ranked&region=all",
         urlencoding::encode(patch),
         urlencoding::encode(slug),
         urlencoding::encode(role),
         urlencoding::encode(rank)
     );
-    get_json(client, &url).await
+    let without_patch = format!(
+        "https://a1.lolalytics.com/mega/?ep=build-team&v=1&c={}&lane={}&tier={}&queue=ranked&region=all",
+        urlencoding::encode(slug),
+        urlencoding::encode(role),
+        urlencoding::encode(rank)
+    );
+    if let Ok(value) = get_json(client, &with_patch).await {
+        if value.get("team").is_some() {
+            return Ok(value);
+        }
+    }
+    get_json(client, &without_patch).await
+}
+
+async fn fetch_counters(
+    client: &reqwest::Client,
+    slug: &str,
+    role: &str,
+    vs_role: &str,
+    rank: &str,
+    patch: &str,
+) -> Result<Value> {
+    let with_patch = format!(
+        "https://a1.lolalytics.com/mega/?ep=counter&v=1&c={}&lane={}&vslane={}&tier={}&queue=ranked&region=all&patch={}",
+        urlencoding::encode(slug),
+        urlencoding::encode(role),
+        urlencoding::encode(vs_role),
+        urlencoding::encode(rank),
+        urlencoding::encode(patch)
+    );
+    let without_patch = format!(
+        "https://a1.lolalytics.com/mega/?ep=counter&v=1&c={}&lane={}&vslane={}&tier={}&queue=ranked&region=all",
+        urlencoding::encode(slug),
+        urlencoding::encode(role),
+        urlencoding::encode(vs_role),
+        urlencoding::encode(rank)
+    );
+    if let Ok(value) = get_json(client, &with_patch).await {
+        if !counter_rows(&value).is_empty() {
+            return Ok(value);
+        }
+    }
+    get_json(client, &without_patch).await
+}
+
+fn counter_rows(payload: &Value) -> Vec<&Value> {
+    let Some(counters) = payload.get("counters") else {
+        return Vec::new();
+    };
+    if let Some(arr) = counters.as_array() {
+        return arr.iter().collect();
+    }
+    if let Some(obj) = counters.as_object() {
+        let mut out = Vec::new();
+        for value in obj.values() {
+            if let Some(arr) = value.as_array() {
+                out.extend(arr.iter());
+            }
+        }
+        return out;
+    }
+    Vec::new()
+}
+
+fn store_counter_json(
+    db: &StatsDb,
+    champ_id: &i64,
+    role: &str,
+    vs_role: &str,
+    rank: &str,
+    patch: &str,
+    payload: &Value,
+) -> Result<usize> {
+    let rows = counter_rows(payload);
+    if rows.is_empty() {
+        return Ok(0);
+    }
+    let kind = if vs_role == role { "lane" } else { "team" };
+    let mut stored = 0usize;
+    for row in rows {
+        let enemy_id = num_field(row, "cid").unwrap_or(0.0) as i64;
+        if enemy_id <= 0 {
+            continue;
+        }
+        let wr = num_field(row, "vsWr").unwrap_or(50.0);
+        let games = num_field(row, "n").unwrap_or(0.0) as i64;
+        let delta = num_field(row, "d1").unwrap_or(wr - 50.0);
+        if games < 40 {
+            continue;
+        }
+        db.upsert_matchup(
+            *champ_id,
+            enemy_id,
+            role,
+            kind,
+            vs_role,
+            rank,
+            patch,
+            &MatchupStat {
+                winrate: wr,
+                games,
+                delta,
+            },
+        )?;
+        stored += 1;
+    }
+    Ok(stored)
 }
 
 async fn fetch_build_html(
@@ -280,6 +415,9 @@ pub fn cache_is_fresh(db: &StatsDb, rank: &str, patch: &str) -> bool {
     if !db.has_patch_data(rank, patch) {
         return false;
     }
+    if !db.has_matchup_data(rank, patch) {
+        return false;
+    }
     if db.get_meta("patch").as_deref() != Some(patch) {
         return false;
     }
@@ -293,4 +431,37 @@ pub fn cache_is_fresh(db: &StatsDb, rank: &str, patch: &str) -> bool {
         }
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::stats::store::StatsDb;
+    use serde_json::json;
+
+    #[test]
+    fn store_counter_json_reads_vs_wr_rows() {
+        let db = StatsDb::open_memory().unwrap();
+        let payload = json!({
+            "counters": [
+                {"cid": 222, "vsWr": 55.2, "n": 8000, "d1": 5.2},
+                {"cid": 51, "vsWr": 47.0, "n": 10, "d1": -3.0}
+            ]
+        });
+        let stored =
+            store_counter_json(&db, &29, "bottom", "bottom", "emerald", "15.1", &payload).unwrap();
+        assert_eq!(stored, 1, "rows with n < 40 should be skipped");
+        let mu = db
+            .matchup(29, 222, "bottom", "bottom", "emerald", "15.1")
+            .expect("jinx matchup");
+        assert!((mu.winrate - 55.2).abs() < 0.01);
+        assert_eq!(mu.games, 8000);
+    }
+
+    #[test]
+    fn lolalytics_tier_maps_settings_brackets() {
+        assert_eq!(lolalytics_tier("emerald"), "emerald_plus");
+        assert_eq!(lolalytics_tier("diamond"), "diamond_plus");
+        assert_eq!(lolalytics_tier("platinum_plus"), "platinum_plus");
+    }
 }

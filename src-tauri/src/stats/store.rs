@@ -74,17 +74,9 @@ impl StatsDb {
         Ok(())
     }
 
-    pub fn begin_ingest(&self, rank: &str, patch: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        // Keep role_stats in place so champ select can still recommend while matchups refresh.
-        conn.execute(
-            "DELETE FROM matchups WHERE rank = ?1 AND patch = ?2",
-            params![rank, patch],
-        )?;
-        conn.execute(
-            "DELETE FROM synergies WHERE rank = ?1 AND patch = ?2",
-            params![rank, patch],
-        )?;
+    pub fn begin_ingest(&self, _rank: &str, _patch: &str) -> Result<()> {
+        // Upsert-only. Never wipe matchups/synergies up front — a failed refresh
+        // must leave the previous counter tables intact for champ select.
         Ok(())
     }
 
@@ -161,7 +153,7 @@ impl StatsDb {
         conn.execute(
             "INSERT OR REPLACE INTO synergies
              (champion_id, ally_id, rank, patch, winrate, games, delta)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 champion_id,
                 ally_id,
@@ -176,17 +168,47 @@ impl StatsDb {
     }
 
     pub fn role_meta(&self, champion_id: i64, role: &str, rank: &str, patch: &str) -> Option<RoleMeta> {
+        let (rank, patch) = self.resolve_stats_key(rank, patch);
+        let found = {
+            let conn = self.conn.lock().ok()?;
+            conn.query_row(
+                "SELECT winrate, pickrate, banrate, games, pct_lane, default_lane FROM role_stats
+                 WHERE champion_id = ?1 AND role = ?2 AND rank = ?3 AND patch = ?4",
+                params![champion_id, role, rank, patch],
+                |row| Ok(read_role_meta(row, 0)),
+            )
+            .ok()
+        };
+        found.or_else(|| self.role_meta_any(champion_id, role))
+    }
+
+    fn role_meta_any(&self, champion_id: i64, role: &str) -> Option<RoleMeta> {
         let conn = self.conn.lock().ok()?;
         conn.query_row(
             "SELECT winrate, pickrate, banrate, games, pct_lane, default_lane FROM role_stats
-             WHERE champion_id = ?1 AND role = ?2 AND rank = ?3 AND patch = ?4",
-            params![champion_id, role, rank, patch],
+             WHERE champion_id = ?1 AND role = ?2
+             ORDER BY games DESC LIMIT 1",
+            params![champion_id, role],
             |row| Ok(read_role_meta(row, 0)),
         )
         .ok()
     }
 
     pub fn matchup(
+        &self,
+        champion_id: i64,
+        enemy_id: i64,
+        role: &str,
+        vs_role: &str,
+        rank: &str,
+        patch: &str,
+    ) -> Option<MatchupStat> {
+        let (rank, patch) = self.resolve_stats_key(rank, patch);
+        self.matchup_at(champion_id, enemy_id, role, vs_role, &rank, &patch)
+            .or_else(|| self.matchup_any(champion_id, enemy_id, role, vs_role))
+    }
+
+    fn matchup_at(
         &self,
         champion_id: i64,
         enemy_id: i64,
@@ -218,6 +240,36 @@ impl StatsDb {
         .ok()
     }
 
+    fn matchup_any(
+        &self,
+        champion_id: i64,
+        enemy_id: i64,
+        role: &str,
+        vs_role: &str,
+    ) -> Option<MatchupStat> {
+        let conn = self.conn.lock().ok()?;
+        conn.query_row(
+            "SELECT winrate, games, delta FROM matchups
+             WHERE champion_id = ?1 AND enemy_id = ?2 AND role = ?3
+               AND (vs_role = ?4 OR vs_role = '' OR kind = 'lane')
+             ORDER BY CASE
+                WHEN vs_role = ?4 THEN 0
+                WHEN kind = 'lane' THEN 1
+                ELSE 2
+             END
+             LIMIT 1",
+            params![champion_id, enemy_id, role, vs_role],
+            |row| {
+                Ok(MatchupStat {
+                    winrate: row.get(0)?,
+                    games: row.get(1)?,
+                    delta: row.get(2)?,
+                })
+            },
+        )
+        .ok()
+    }
+
     pub fn synergy(
         &self,
         champion_id: i64,
@@ -225,11 +277,33 @@ impl StatsDb {
         rank: &str,
         patch: &str,
     ) -> Option<MatchupStat> {
+        let (rank, patch) = self.resolve_stats_key(rank, patch);
+        let found = {
+            let conn = self.conn.lock().ok()?;
+            conn.query_row(
+                "SELECT winrate, games, delta FROM synergies
+                 WHERE champion_id = ?1 AND ally_id = ?2 AND rank = ?3 AND patch = ?4",
+                params![champion_id, ally_id, rank, patch],
+                |row| {
+                    Ok(MatchupStat {
+                        winrate: row.get(0)?,
+                        games: row.get(1)?,
+                        delta: row.get(2)?,
+                    })
+                },
+            )
+            .ok()
+        };
+        found.or_else(|| self.synergy_any(champion_id, ally_id))
+    }
+
+    fn synergy_any(&self, champion_id: i64, ally_id: i64) -> Option<MatchupStat> {
         let conn = self.conn.lock().ok()?;
         conn.query_row(
             "SELECT winrate, games, delta FROM synergies
-             WHERE champion_id = ?1 AND ally_id = ?2 AND rank = ?3 AND patch = ?4",
-            params![champion_id, ally_id, rank, patch],
+             WHERE champion_id = ?1 AND ally_id = ?2
+             ORDER BY games DESC LIMIT 1",
+            params![champion_id, ally_id],
             |row| {
                 Ok(MatchupStat {
                     winrate: row.get(0)?,
@@ -242,6 +316,7 @@ impl StatsDb {
     }
 
     pub fn flexibility(&self, champion_id: i64, role: &str, rank: &str, patch: &str) -> Option<f64> {
+        let (rank, patch) = self.resolve_stats_key(rank, patch);
         let conn = self.conn.lock().ok()?;
         conn.query_row(
             "SELECT AVG(winrate) FROM matchups
@@ -254,11 +329,16 @@ impl StatsDb {
     }
 
     pub fn champions_in_role(&self, role: &str, rank: &str, patch: &str) -> Vec<(i64, RoleMeta)> {
-        let strict = self.query_role_champs(role, rank, patch, true);
+        let (rank, patch) = self.resolve_stats_key(rank, patch);
+        let strict = self.query_role_champs(role, &rank, &patch, true);
         if !strict.is_empty() {
             return strict;
         }
-        self.query_role_champs(role, rank, patch, false)
+        let relaxed = self.query_role_champs(role, &rank, &patch, false);
+        if !relaxed.is_empty() {
+            return relaxed;
+        }
+        self.query_role_champs_any(role)
     }
 
     fn query_role_champs(
@@ -294,31 +374,106 @@ impl StatsDb {
     }
 
     pub fn primary_role(&self, champion_id: i64, rank: &str, patch: &str) -> Option<String> {
-        let conn = self.conn.lock().ok()?;
-        conn.query_row(
-            "SELECT default_lane, role FROM role_stats
-             WHERE champion_id = ?1 AND rank = ?2 AND patch = ?3
-             ORDER BY games DESC LIMIT 1",
-            params![champion_id, rank, patch],
-            |row| {
-                let default_lane: String = row.get(0)?;
-                let role: String = row.get(1)?;
-                Ok(if !default_lane.is_empty() {
-                    default_lane
-                } else {
-                    role
-                })
-            },
-        )
-        .ok()
-        .map(|role| crate::models::normalize_role(&role))
-        .filter(|role| !role.is_empty())
+        let (rank, patch) = self.resolve_stats_key(rank, patch);
+        let found = {
+            let conn = self.conn.lock().ok()?;
+            conn.query_row(
+                "SELECT default_lane, role FROM role_stats
+                 WHERE champion_id = ?1 AND rank = ?2 AND patch = ?3
+                 ORDER BY games DESC LIMIT 1",
+                params![champion_id, rank, patch],
+                |row| {
+                    let default_lane: String = row.get(0)?;
+                    let role: String = row.get(1)?;
+                    Ok(if !default_lane.is_empty() {
+                        default_lane
+                    } else {
+                        role
+                    })
+                },
+            )
+            .ok()
+        };
+        found
+            .or_else(|| {
+                let conn = self.conn.lock().ok()?;
+                conn.query_row(
+                    "SELECT default_lane, role FROM role_stats
+                     WHERE champion_id = ?1
+                     ORDER BY games DESC LIMIT 1",
+                    params![champion_id],
+                    |row| {
+                        let default_lane: String = row.get(0)?;
+                        let role: String = row.get(1)?;
+                        Ok(if !default_lane.is_empty() {
+                            default_lane
+                        } else {
+                            role
+                        })
+                    },
+                )
+                .ok()
+            })
+            .map(|role| crate::models::normalize_role(&role))
+            .filter(|role| !role.is_empty())
     }
 
     pub fn has_patch_data(&self, rank: &str, patch: &str) -> bool {
+        self.role_stat_count(rank, patch) > 20
+    }
+
+    pub fn has_any_role_data(&self) -> bool {
         let conn = match self.conn.lock() {
             Ok(c) => c,
             Err(_) => return false,
+        };
+        conn.query_row("SELECT COUNT(*) FROM role_stats", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap_or(0)
+            > 20
+    }
+
+    pub fn has_matchup_data(&self, rank: &str, patch: &str) -> bool {
+        let (rank, patch) = self.resolve_stats_key(rank, patch);
+        let conn = match self.conn.lock() {
+            Ok(c) => c,
+            Err(_) => return false,
+        };
+        conn.query_row(
+            "SELECT COUNT(*) FROM matchups WHERE rank = ?1 AND patch = ?2",
+            params![rank, patch],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or(0)
+            > 50
+    }
+
+    pub fn resolve_stats_key(&self, rank: &str, patch: &str) -> (String, String) {
+        if self.role_stat_count(rank, patch) > 0 {
+            return (rank.to_string(), patch.to_string());
+        }
+        if let Some(p) = self.latest_patch_for_rank(rank) {
+            return (rank.to_string(), p);
+        }
+        if let Some(r) = self.any_rank_for_patch(patch) {
+            return (r, patch.to_string());
+        }
+        if let (Some(r), Some(p)) = (self.get_meta("rank"), self.get_meta("patch")) {
+            if self.role_stat_count(&r, &p) > 0 {
+                return (r, p);
+            }
+        }
+        if let Some(key) = self.any_stats_key() {
+            return key;
+        }
+        (rank.to_string(), patch.to_string())
+    }
+
+    fn role_stat_count(&self, rank: &str, patch: &str) -> i64 {
+        let conn = match self.conn.lock() {
+            Ok(c) => c,
+            Err(_) => return 0,
         };
         conn.query_row(
             "SELECT COUNT(*) FROM role_stats WHERE rank = ?1 AND patch = ?2",
@@ -326,7 +481,66 @@ impl StatsDb {
             |row| row.get::<_, i64>(0),
         )
         .unwrap_or(0)
-            > 20
+    }
+
+    fn latest_patch_for_rank(&self, rank: &str) -> Option<String> {
+        let conn = self.conn.lock().ok()?;
+        conn.query_row(
+            "SELECT patch FROM role_stats WHERE rank = ?1
+             GROUP BY patch ORDER BY COUNT(*) DESC LIMIT 1",
+            params![rank],
+            |row| row.get(0),
+        )
+        .ok()
+    }
+
+    fn any_rank_for_patch(&self, patch: &str) -> Option<String> {
+        let conn = self.conn.lock().ok()?;
+        conn.query_row(
+            "SELECT rank FROM role_stats WHERE patch = ?1
+             GROUP BY rank ORDER BY COUNT(*) DESC LIMIT 1",
+            params![patch],
+            |row| row.get(0),
+        )
+        .ok()
+    }
+
+    fn any_stats_key(&self) -> Option<(String, String)> {
+        let conn = self.conn.lock().ok()?;
+        conn.query_row(
+            "SELECT rank, patch FROM role_stats
+             GROUP BY rank, patch ORDER BY COUNT(*) DESC LIMIT 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .ok()
+    }
+
+    fn query_role_champs_any(&self, role: &str) -> Vec<(i64, RoleMeta)> {
+        let conn = match self.conn.lock() {
+            Ok(c) => c,
+            Err(_) => return Vec::new(),
+        };
+        let mut stmt = match conn.prepare(
+            "SELECT champion_id, winrate, pickrate, banrate, games, pct_lane, default_lane FROM role_stats
+             WHERE role = ?1
+             ORDER BY games DESC",
+        ) {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        let rows = stmt.query_map(params![role], |row| {
+            Ok((row.get::<_, i64>(0)?, read_role_meta(row, 1)))
+        });
+        match rows {
+            Ok(iter) => {
+                let mut seen = std::collections::HashSet::new();
+                iter.filter_map(|r| r.ok())
+                    .filter(|(id, _)| seen.insert(*id))
+                    .collect()
+            }
+            Err(_) => Vec::new(),
+        }
     }
 }
 
