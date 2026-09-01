@@ -127,7 +127,8 @@ pub fn recommend(
             if lane_enemy_id == Some(*enemy_id) {
                 continue;
             }
-            if let Some(stat) = db.matchup(champ_id, *enemy_id, role, vs_role, &ctx.rank, &ctx.patch)
+            if let Some(stat) =
+                db.matchup(champ_id, *enemy_id, role, vs_role, &ctx.rank, &ctx.patch)
             {
                 let w = vs_role_weight(role, vs_role);
                 team_delta_sum += w * shrunk_delta(&stat);
@@ -219,12 +220,7 @@ pub fn recommend(
     scored.into_iter().map(|s| s.rec).collect()
 }
 
-fn still_lockable(
-    id: i64,
-    banned: &HashSet<i64>,
-    taken: &HashSet<i64>,
-    catalog: &Catalog,
-) -> bool {
+fn still_lockable(id: i64, banned: &HashSet<i64>, taken: &HashSet<i64>, catalog: &Catalog) -> bool {
     id > 0 && !banned.contains(&id) && !taken.contains(&id) && catalog.by_id.contains_key(&id)
 }
 
@@ -794,16 +790,26 @@ mod tests {
         };
 
         let recs = recommend(&db, &catalog, &draft, &ctx);
-        assert!(!recs.is_empty(), "second pick should still get recommendations");
         assert!(
-            recs.iter().all(|r| r.champion_id != SINGED && r.champion_id != CAITLYN),
+            !recs.is_empty(),
+            "second pick should still get recommendations"
+        );
+        assert!(
+            recs.iter()
+                .all(|r| r.champion_id != SINGED && r.champion_id != CAITLYN),
             "taken/off-role champs must stay out: {recs:?}"
         );
         let jinx_idx = recs.iter().position(|r| r.champion_id == JINX);
         let mf_idx = recs.iter().position(|r| r.champion_id == MISS_FORTUNE);
-        assert!(jinx_idx.is_some(), "Jinx should counter inferred Caitlyn: {recs:?}");
+        assert!(
+            jinx_idx.is_some(),
+            "Jinx should counter inferred Caitlyn: {recs:?}"
+        );
         if let (Some(j), Some(m)) = (jinx_idx, mf_idx) {
-            assert!(j < m, "inferred lane counter should outrank the losing matchup");
+            assert!(
+                j < m,
+                "inferred lane counter should outrank the losing matchup"
+            );
         }
         assert!(
             recs[0].reason.contains("Caitlyn") || recs[0].lane_delta.is_some(),
@@ -866,7 +872,10 @@ mod tests {
         let ctx = ctx_with_pickable(&[TWITCH, MISS_FORTUNE, CAITLYN, SINGED]);
         let recs = recommend(&db, &catalog, &enemy_adc(JINX), &ctx);
         assert!(!recs.is_empty());
-        assert_eq!(recs[0].champion_id, TWITCH, "Twitch should lead vs Jinx: {recs:?}");
+        assert_eq!(
+            recs[0].champion_id, TWITCH,
+            "Twitch should lead vs Jinx: {recs:?}"
+        );
         assert!(
             recs[0].reason.contains("Jinx"),
             "reason should name Jinx: {}",
@@ -1003,7 +1012,10 @@ mod tests {
             ..Default::default()
         };
         let recs = recommend(&db, &catalog, &with_braum, &ctx);
-        assert_eq!(recs[0].champion_id, TWITCH, "Braum synergy should put Twitch first: {recs:?}");
+        assert_eq!(
+            recs[0].champion_id, TWITCH,
+            "Braum synergy should put Twitch first: {recs:?}"
+        );
         assert!(
             recs[0].reason.contains("Braum") || recs[0].synergy_delta.is_some(),
             "reason should mention Braum: {}",
@@ -1126,7 +1138,10 @@ mod tests {
             "LCU utility must map to support stats: {recs:?}"
         );
         assert!(recs.iter().all(|r| {
-            r.champion_id == THRESH || r.champion_id == LULU || r.champion_id == JANNA || r.champion_id == BRAUM
+            r.champion_id == THRESH
+                || r.champion_id == LULU
+                || r.champion_id == JANNA
+                || r.champion_id == BRAUM
         }));
     }
 }
