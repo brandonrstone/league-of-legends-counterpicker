@@ -2,7 +2,6 @@ mod catalog;
 mod engine;
 mod lcu;
 mod models;
-mod riot;
 mod settings;
 mod stats;
 
@@ -40,7 +39,6 @@ struct InnerState {
     pickable: HashSet<i64>,
     owned: HashSet<i64>,
     mastery: HashMap<i64, (i64, i64)>,
-    puuid: Option<String>,
     recommendations: Vec<Recommendation>,
     stats: StatsStatus,
 }
@@ -74,8 +72,6 @@ struct SettingsPatch {
     comfort_weighting: Option<bool>,
     always_on_top: Option<bool>,
     role_override: Option<String>,
-    riot_platform: Option<String>,
-    riot_api_key: Option<String>,
 }
 
 #[tauri::command]
@@ -102,12 +98,6 @@ async fn update_settings(
     }
     if let Some(v) = patch.role_override {
         inner.settings.role_override = v;
-    }
-    if let Some(v) = patch.riot_platform {
-        inner.settings.riot_platform = v;
-    }
-    if let Some(v) = patch.riot_api_key {
-        inner.settings.riot_api_key = if v.is_empty() { None } else { Some(v) };
     }
     let _ = save_settings(&state.settings_file, &inner.settings);
     rescore(&state.db, &mut inner);
@@ -417,11 +407,6 @@ async fn refresh_from_lcu(app: &AppHandle, state: &Arc<AppState>, client: &LcuHt
         } else {
             format!("{}#{}", s.game_name, s.tag_line)
         });
-        inner.puuid = if s.puuid.is_empty() {
-            None
-        } else {
-            Some(s.puuid)
-        };
     }
     inner.lcu.detected_rank = ranked;
     if let Some(p) = phase.clone() {
@@ -602,46 +587,8 @@ async fn bootstrap(app: AppHandle, state: Arc<AppState>) {
     }
 }
 
-async fn optional_riot_refresh(app: AppHandle, state: Arc<AppState>) {
-    loop {
-        tokio::time::sleep(Duration::from_secs(45)).await;
-        let (key, platform, puuid, comfort) = {
-            let inner = state.inner.lock().await;
-            (
-                inner.settings.riot_api_key.clone().unwrap_or_default(),
-                inner.settings.riot_platform.clone(),
-                inner.puuid.clone().unwrap_or_default(),
-                inner.settings.comfort_weighting,
-            )
-        };
-        if key.is_empty() || puuid.is_empty() || !comfort {
-            continue;
-        }
-        if let Ok(profile) = riot::fetch_profile(&state.http, &key, &platform, &puuid).await {
-            let mut inner = state.inner.lock().await;
-            if let Some(tier) = profile.tier {
-                inner.lcu.detected_rank = Some(tier);
-            }
-            if !profile.mastery.is_empty() {
-                inner.mastery = profile.mastery;
-            }
-            rescore(&state.db, &mut inner);
-            let snap = inner.snapshot();
-            drop(inner);
-            emit_snapshot(&app, &snap);
-        }
-    }
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let _ = dotenvy::from_filename(".env");
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let _ = dotenvy::from_path(dir.join(".env"));
-        }
-    }
-
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
@@ -670,7 +617,6 @@ pub fn run() {
                     pickable: HashSet::new(),
                     owned: HashSet::new(),
                     mastery: HashMap::new(),
-                    puuid: None,
                     recommendations: Vec::new(),
                     stats: StatsStatus::default(),
                 }),
@@ -688,11 +634,6 @@ pub fn run() {
             let s2 = state.clone();
             tauri::async_runtime::spawn(async move {
                 lcu_loop(handle, s2).await;
-            });
-            let handle = app.handle().clone();
-            let s3 = state.clone();
-            tauri::async_runtime::spawn(async move {
-                optional_riot_refresh(handle, s3).await;
             });
             Ok(())
         })
