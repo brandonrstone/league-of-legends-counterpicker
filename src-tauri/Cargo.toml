@@ -30,7 +30,6 @@ regex = "1"
 anyhow = "1"
 thiserror = "2"
 chrono = { version = "0.4", features = ["clock"] }
-dotenvy = "0.15"
 urlencoding = "2"
 
 [dev-dependencies]

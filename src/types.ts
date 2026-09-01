@@ -59,8 +59,6 @@ export type AppSnapshot = {
     comfortWeighting: boolean;
     alwaysOnTop: boolean;
     roleOverride: string;
-    riotPlatform: string;
-    hasRiotKey: boolean;
   };
   catalogReady: boolean;
   legal: string;
