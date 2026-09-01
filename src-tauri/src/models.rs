@@ -81,8 +81,6 @@ pub struct PublicSettings {
     pub comfort_weighting: bool,
     pub always_on_top: bool,
     pub role_override: String,
-    pub riot_platform: String,
-    pub has_riot_key: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

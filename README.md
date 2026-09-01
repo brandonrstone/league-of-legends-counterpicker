@@ -38,8 +38,9 @@ First launch downloads matchup tables for the current patch. That can take sever
 
 Settings worth knowing:
 
-- **Owned champions only** — stick to what is in your loot
-- **Weight by champion mastery** — a light nudge toward champs you actually play
+- **Owned champions only** — hide champs that are not in your collection
+- **Weight by champion mastery** — a small score bump for champs you have played more. Lane and team matchups still dominate; this just leans the list toward champs you already know
+- **Always on top** — keep the overlay above the League client during champ select. Turn it off if it covers the client and you would rather Alt-Tab
 - **Rank bracket** — which Elo’s stats to use (Auto is fine)
 - **Refresh stats** — force a new download if something looks stale
 

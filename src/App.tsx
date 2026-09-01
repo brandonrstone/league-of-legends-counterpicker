@@ -23,8 +23,6 @@ const emptySnap = (): AppSnapshot => ({
     comfortWeighting: true,
     alwaysOnTop: true,
     roleOverride: "middle",
-    riotPlatform: "na1",
-    hasRiotKey: false,
   },
   catalogReady: false,
   legal: "",
@@ -54,7 +52,6 @@ function signed(n: number | null) {
 export default function App() {
   const [snap, setSnap] = useState<AppSnapshot>(emptySnap);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [riotKey, setRiotKey] = useState("");
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -91,22 +88,20 @@ export default function App() {
           <h1 className="font-display text-2xl font-bold text-gold-2">Rift Counterpick</h1>
         </div>
         <button
-          className="hex-frame rounded-sm bg-[#132033] px-3 py-1.5 text-xs tracking-wide text-gold"
+          type="button"
+          className="hex-frame flex h-9 w-9 items-center justify-center rounded-sm bg-[#132033] text-gold hover:bg-[#1a2a40]"
+          aria-label={settingsOpen ? "Close settings" : "Open settings"}
+          aria-expanded={settingsOpen}
           onClick={() => setSettingsOpen((v) => !v)}
         >
-          {settingsOpen ? "Close" : "Settings"}
+          <GearIcon open={settingsOpen} />
         </button>
       </header>
 
       <StatusBar snap={snap} phase={phase} />
 
       {settingsOpen ? (
-        <SettingsPanel
-          snap={snap}
-          riotKey={riotKey}
-          setRiotKey={setRiotKey}
-          onPatch={patchSettings}
-        />
+        <SettingsPanel snap={snap} onPatch={patchSettings} />
       ) : null}
 
       {!snap.lcu.connected ? (
@@ -333,15 +328,51 @@ function RecCard({ rec, rank, active }: { rec: Recommendation; rank: number; act
   );
 }
 
+function GearIcon({ open }: { open: boolean }) {
+  return (
+    <svg
+      className={`gear-icon h-5 w-5 ${open ? "is-open" : ""}`}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <path d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.84a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.13.23.4.32.64.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.26.42.5.42h3.84c.24 0 .45-.18.5-.42l.36-2.54c.59-.24 1.13-.57 1.62-.94l2.39.96c.24.1.51 0 .64-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z" />
+    </svg>
+  );
+}
+
+function SettingsToggle({
+  checked,
+  onChange,
+  title,
+  description,
+}: {
+  checked: boolean;
+  onChange: (next: boolean) => void;
+  title: string;
+  description: string;
+}) {
+  return (
+    <label className="mb-3 flex items-start gap-2 text-xs text-[#d2c3a0]">
+      <input
+        type="checkbox"
+        className="mt-0.5"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+      <span>
+        <span className="block">{title}</span>
+        <span className="mt-0.5 block text-[10px] leading-snug text-[#8b7d62]">{description}</span>
+      </span>
+    </label>
+  );
+}
+
 function SettingsPanel({
   snap,
-  riotKey,
-  setRiotKey,
   onPatch,
 }: {
   snap: AppSnapshot;
-  riotKey: string;
-  setRiotKey: (v: string) => void;
   onPatch: (p: Record<string, unknown>) => void;
 }) {
   return (
@@ -362,61 +393,27 @@ function SettingsPanel({
           <option value="all">All ranks</option>
         </select>
       </label>
-      <label className="mb-2 flex items-center gap-2 text-xs text-[#d2c3a0]">
-        <input
-          type="checkbox"
-          checked={snap.settings.ownedOnly}
-          onChange={(e) => onPatch({ ownedOnly: e.target.checked })}
-        />
-        Owned champions only
-      </label>
-      <label className="mb-2 flex items-center gap-2 text-xs text-[#d2c3a0]">
-        <input
-          type="checkbox"
-          checked={snap.settings.comfortWeighting}
-          onChange={(e) => onPatch({ comfortWeighting: e.target.checked })}
-        />
-        Weight by champion mastery
-      </label>
-      <label className="mb-3 flex items-center gap-2 text-xs text-[#d2c3a0]">
-        <input
-          type="checkbox"
-          checked={snap.settings.alwaysOnTop}
-          onChange={(e) => onPatch({ alwaysOnTop: e.target.checked })}
-        />
-        Always on top
-      </label>
-      <label className="mb-2 block text-xs text-[#b9a888]">
-        Riot platform
-        <input
-          className="mt-1 w-full rounded-sm border border-gold/30 bg-[#102036] p-2 text-gold-2"
-          value={snap.settings.riotPlatform}
-          onChange={(e) => onPatch({ riotPlatform: e.target.value })}
-        />
-      </label>
-      <label className="mb-2 block text-xs text-[#b9a888]">
-        Optional Riot API key (stored locally, never logged)
-        <input
-          type="password"
-          className="mt-1 w-full rounded-sm border border-gold/30 bg-[#102036] p-2 text-gold-2"
-          placeholder={snap.settings.hasRiotKey ? "Key saved — paste to replace" : "RGAPI-…"}
-          value={riotKey}
-          onChange={(e) => setRiotKey(e.target.value)}
-        />
-      </label>
+      <SettingsToggle
+        checked={snap.settings.ownedOnly}
+        onChange={(v) => onPatch({ ownedOnly: v })}
+        title="Owned champions only"
+        description="Hide champs that are not in your collection, so the list only suggests what you can actually lock."
+      />
+      <SettingsToggle
+        checked={snap.settings.comfortWeighting}
+        onChange={(v) => onPatch({ comfortWeighting: v })}
+        title="Weight by champion mastery"
+        description="Gives a small score bump to champs you have played more. Lane and team matchups still matter more — this just leans the list toward champs you already know."
+      />
+      <SettingsToggle
+        checked={snap.settings.alwaysOnTop}
+        onChange={(v) => onPatch({ alwaysOnTop: v })}
+        title="Always on top"
+        description="Keeps this overlay above the League client so you can see picks during champ select. Turn it off if the window is covering the client and you would rather Alt-Tab to it."
+      />
       <div className="flex gap-2">
         <button
-          className="rounded-sm bg-gold px-3 py-1.5 text-xs font-semibold text-[#0a1428]"
-          onClick={() => {
-            if (riotKey.trim()) {
-              onPatch({ riotApiKey: riotKey.trim() });
-              setRiotKey("");
-            }
-          }}
-        >
-          Save key
-        </button>
-        <button
+          type="button"
           className="rounded-sm border border-gold/40 px-3 py-1.5 text-xs text-gold"
           onClick={() => invoke("refresh_stats")}
         >

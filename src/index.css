@@ -52,3 +52,13 @@ body,
     box-shadow: 0 0 0 8px rgba(200, 170, 110, 0);
   }
 }
+
+.gear-icon {
+  transform-origin: 50% 50%;
+  transition: transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.gear-icon.is-open {
+  /* One tooth on an 8-notch gear */
+  transform: rotate(45deg);
+}
