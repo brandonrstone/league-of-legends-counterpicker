@@ -85,8 +85,6 @@ pub struct CurrentSummoner {
     #[serde(default)]
     pub tag_line: String,
     #[serde(default)]
-    pub puuid: String,
-    #[serde(default)]
     pub summoner_id: i64,
 }
 
