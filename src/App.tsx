@@ -300,10 +300,10 @@ function EmptyState({ title, body, seeking = false }: { title: string; body: str
     <section className="hex-frame flex flex-1 flex-col items-center justify-center rounded-2xl px-6 py-16 text-center">
       <div className="relative mb-5 h-16 w-16">
         <div
-          className={`absolute inset-0 rounded-full border border-gold/35 bg-[#c8aa6e12] ${seeking ? "seek-ring" : ""}`}
+          className={`absolute inset-0 rounded-full border border-gold/35 bg-[#c8aa6e12] ${seeking ? "animate-seek" : ""}`}
         />
         <div
-          className={`absolute inset-[18px] rounded-full border border-gold/70 ${seeking ? "seek-ring-inner" : ""}`}
+          className={`absolute inset-[18px] rounded-full border border-gold/70 ${seeking ? "animate-seek [animation-delay:450ms]" : ""}`}
         />
       </div>
       <h2 className="font-display text-xl font-medium text-gold">{title}</h2>

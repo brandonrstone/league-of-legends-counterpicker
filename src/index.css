@@ -8,6 +8,7 @@
   --color-gold: #c8aa6e;
   --color-gold-2: #f0e6d2;
   --color-hex: #1e2d45;
+  --animate-seek: seekPulse 2.8s ease-in-out infinite;
 }
 
 html,
@@ -70,21 +71,6 @@ body,
   transform: rotate(45deg);
 }
 
-.seek-ring,
-.seek-ring-inner {
-  transform-origin: 50% 50%;
-  will-change: transform, opacity;
-}
-
-.seek-ring {
-  animation: seekPulse 2.8s ease-in-out infinite;
-}
-
-.seek-ring-inner {
-  animation: seekPulse 2.8s ease-in-out infinite;
-  animation-delay: 0.45s;
-}
-
 @keyframes seekPulse {
   0%,
   100% {
@@ -92,8 +78,14 @@ body,
     opacity: 0.55;
   }
   50% {
-    transform: scale(1.07);
+    transform: scale(1.1);
     opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-seek {
+    animation: none;
   }
 }
 
