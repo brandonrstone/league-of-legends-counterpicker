@@ -10,6 +10,8 @@ pub struct Settings {
     pub comfort_weighting: bool,
     pub always_on_top: bool,
     pub role_override: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dismissed_update: Option<String>,
 }
 
 impl Default for Settings {
@@ -20,6 +22,7 @@ impl Default for Settings {
             comfort_weighting: true,
             always_on_top: true,
             role_override: "middle".into(),
+            dismissed_update: None,
         }
     }
 }

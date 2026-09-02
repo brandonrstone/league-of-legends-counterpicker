@@ -4,13 +4,14 @@ mod lcu;
 mod models;
 mod settings;
 mod stats;
+mod update;
 
 use catalog::Catalog;
 use engine::ScoreContext;
 use lcu::lockfile::{discover_lockfile, LockfileInfo};
 use lcu::types::ChampSelectSession;
 use lcu::LcuHttp;
-use models::{legal_boilerplate, AppSnapshot, DraftView, LcuStatus, Recommendation, StatsStatus};
+use models::{legal_boilerplate, AppSnapshot, AppUpdate, DraftView, LcuStatus, Recommendation, StatsStatus};
 use settings::{load_settings, save_settings, settings_path, Settings};
 use stats::{cache_is_fresh, ingest_lolalytics, StatsDb};
 use std::collections::{HashMap, HashSet};
@@ -20,6 +21,7 @@ use std::time::Duration;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_opener::OpenerExt;
 use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -41,6 +43,8 @@ struct InnerState {
     mastery: HashMap<i64, (i64, i64)>,
     recommendations: Vec<Recommendation>,
     stats: StatsStatus,
+    update: Option<AppUpdate>,
+    current_version: String,
 }
 
 impl InnerState {
@@ -54,6 +58,7 @@ impl InnerState {
             settings: self.settings.public(),
             catalog_ready: self.catalog.is_some(),
             legal: legal_boilerplate(),
+            update: self.update.clone(),
         }
     }
 }
@@ -115,6 +120,150 @@ async fn refresh_stats(app: AppHandle, state: State<'_, Arc<AppState>>) -> Resul
         run_ingest(handle, state, true).await;
     });
     Ok(())
+}
+
+#[tauri::command]
+async fn download_update(app: AppHandle, state: State<'_, Arc<AppState>>) -> Result<(), String> {
+    let (url, dest) = {
+        let mut inner = state.inner.lock().await;
+        let update = inner
+            .update
+            .as_mut()
+            .ok_or_else(|| "no update available".to_string())?;
+        if update.status == "downloading" {
+            return Ok(());
+        }
+        update.status = "downloading".into();
+        update.progress = 0.0;
+        update.message = format!("Downloading {}…", update.version);
+        let url = update.download_url.clone();
+        let name = update.asset_name.clone();
+        let snap = inner.snapshot();
+        drop(inner);
+        emit_snapshot(&app, &snap);
+        let dir = app
+            .path()
+            .download_dir()
+            .or_else(|_| app.path().app_data_dir())
+            .map_err(|e| e.to_string())?;
+        (url, dir.join(name))
+    };
+
+    let result = update::download_installer(&state.http, &url, &dest).await;
+    match result {
+        Ok(()) => {
+            let mut inner = state.inner.lock().await;
+            if let Some(update) = inner.update.as_mut() {
+                update.status = "ready".into();
+                update.progress = 1.0;
+                update.message = "Installer downloaded — opening…".into();
+            }
+            let snap = inner.snapshot();
+            drop(inner);
+            emit_snapshot(&app, &snap);
+            if let Err(err) = app.opener().open_path(&dest, None::<&str>) {
+                let mut inner = state.inner.lock().await;
+                if let Some(update) = inner.update.as_mut() {
+                    update.status = "ready".into();
+                    update.message = format!(
+                        "Saved to Downloads as {}. Open it to install.",
+                        dest.file_name()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("the installer")
+                    );
+                }
+                let snap = inner.snapshot();
+                drop(inner);
+                emit_snapshot(&app, &snap);
+                let _ = err;
+            }
+            Ok(())
+        }
+        Err(err) => {
+            let mut inner = state.inner.lock().await;
+            if let Some(update) = inner.update.as_mut() {
+                update.status = "error".into();
+                update.message = "Download failed — click to retry".into();
+            }
+            let snap = inner.snapshot();
+            drop(inner);
+            emit_snapshot(&app, &snap);
+            Err(err.to_string())
+        }
+    }
+}
+
+#[tauri::command]
+async fn dismiss_update(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<AppSnapshot, String> {
+    let mut inner = state.inner.lock().await;
+    if let Some(update) = inner.update.take() {
+        inner.settings.dismissed_update = Some(update.version);
+        let _ = save_settings(&state.settings_file, &inner.settings);
+    }
+    let snap = inner.snapshot();
+    drop(inner);
+    let _ = app.emit("snapshot", &snap);
+    Ok(snap)
+}
+
+async fn check_for_update(app: &AppHandle, state: &Arc<AppState>) {
+    let (current, dismissed, busy) = {
+        let inner = state.inner.lock().await;
+        let busy = inner
+            .update
+            .as_ref()
+            .is_some_and(|u| u.status == "downloading");
+        (
+            inner.current_version.clone(),
+            inner.settings.dismissed_update.clone(),
+            busy,
+        )
+    };
+    if busy {
+        return;
+    }
+    let Ok(release) = update::fetch_latest_release(&state.http).await else {
+        return;
+    };
+    let Some(offer) = update::offer_from_release(&release, &current) else {
+        let mut inner = state.inner.lock().await;
+        if inner
+            .update
+            .as_ref()
+            .is_some_and(|u| u.status != "downloading")
+        {
+            inner.update = None;
+            let snap = inner.snapshot();
+            drop(inner);
+            emit_snapshot(app, &snap);
+        }
+        return;
+    };
+    if dismissed.as_deref() == Some(offer.version.as_str()) {
+        return;
+    }
+    let mut inner = state.inner.lock().await;
+    if inner
+        .update
+        .as_ref()
+        .is_some_and(|u| u.status == "downloading")
+    {
+        return;
+    }
+    inner.update = Some(offer);
+    let snap = inner.snapshot();
+    drop(inner);
+    emit_snapshot(app, &snap);
+}
+
+async fn update_loop(app: AppHandle, state: Arc<AppState>) {
+    loop {
+        check_for_update(&app, &state).await;
+        tokio::time::sleep(Duration::from_secs(4 * 60 * 60)).await;
+    }
 }
 
 fn emit_snapshot(app: &AppHandle, snap: &AppSnapshot) {
@@ -619,6 +768,8 @@ pub fn run() {
                     mastery: HashMap::new(),
                     recommendations: Vec::new(),
                     stats: StatsStatus::default(),
+                    update: None,
+                    current_version: app.package_info().version.to_string(),
                 }),
                 db,
                 http,
@@ -635,12 +786,19 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 lcu_loop(handle, s2).await;
             });
+            let handle = app.handle().clone();
+            let s3 = state.clone();
+            tauri::async_runtime::spawn(async move {
+                update_loop(handle, s3).await;
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             get_snapshot,
             update_settings,
-            refresh_stats
+            refresh_stats,
+            download_update,
+            dismiss_update
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {

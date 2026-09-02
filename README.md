@@ -31,6 +31,7 @@ You can just leave it running in the **system tray** (near the clock), and no wi
 
 - Clicking **X** hides it back to the tray. It does not quit.
 - Right-click the tray icon → **Quit** to actually close it. **Show** (or double-click the icon) opens the window if you want settings between games.
+- After a new GitHub release, a banner appears in the overlay. Click it to download the installer to your Downloads folder and run it.
 
 Leave it on between queues so the next draft is instant. Do not run the installed app and `tauri dev` at the same time.
 
@@ -51,7 +52,7 @@ You only need Node and Rust to *build*. After that it is a regular Windows app.
 1. Install [Node.js 22+](https://nodejs.org/) and [Rust](https://rustup.rs/).
 2. `npm install`
 3. `npm run build:app`
-4. Run the installer in `src-tauri/target/release/bundle/nsis/` (`Rift Counterpick_1.0.1_x64-setup.exe`).
+4. Run the installer in `src-tauri/target/release/bundle/nsis/` (`Rift Counterpick_1.0.2_x64-setup.exe`).
 5. Open **Rift Counterpick** from the Start Menu.
 
 When you change the code later, build again and re-run the new setup. It upgrades in place.

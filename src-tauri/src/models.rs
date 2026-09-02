@@ -85,6 +85,17 @@ pub struct PublicSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AppUpdate {
+    pub version: String,
+    pub download_url: String,
+    pub asset_name: String,
+    pub status: String,
+    pub progress: f64,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AppSnapshot {
     pub lcu: LcuStatus,
     pub game_phase: Option<String>,
@@ -94,6 +105,7 @@ pub struct AppSnapshot {
     pub settings: PublicSettings,
     pub catalog_ready: bool,
     pub legal: String,
+    pub update: Option<AppUpdate>,
 }
 
 impl Default for LcuStatus {
