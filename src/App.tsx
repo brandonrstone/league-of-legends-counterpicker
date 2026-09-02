@@ -89,10 +89,35 @@ export default function App() {
   async function onDownloadUpdate() {
     const update = snap.update;
     if (!update || update.status === "downloading") return;
+    setSnap((prev) =>
+      prev.update
+        ? {
+            ...prev,
+            update: {
+              ...prev.update,
+              status: "downloading",
+              message: `Downloading ${prev.update.version}…`,
+            },
+          }
+        : prev,
+    );
     try {
       await invoke("download_update");
     } catch {
       window.open(update.downloadUrl, "_blank", "noopener,noreferrer");
+      setSnap((prev) =>
+        prev.update
+          ? {
+              ...prev,
+              update: {
+                ...prev.update,
+                status: "ready",
+                progress: 1,
+                message: "Download started",
+              },
+            }
+          : prev,
+      );
     }
   }
 
