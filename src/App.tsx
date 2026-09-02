@@ -134,17 +134,17 @@ export default function App() {
   }
 
   return (
-    <div className="flex min-h-full flex-col px-4 py-4">
-      <header className="mb-4 flex items-start justify-between gap-3">
+    <div className="flex min-h-full flex-col px-5 py-5">
+      <header className="mb-5 flex items-start justify-between gap-3">
         <div>
-          <p className="font-display text-[11px] tracking-[0.28em] text-gold uppercase">
+          <p className="text-[11px] font-medium tracking-[0.28em] text-gold uppercase">
             League of Legends
           </p>
-          <h1 className="font-display text-2xl font-bold text-gold-2">Counterpicker</h1>
+          <h1 className="font-display text-[28px] font-medium leading-tight text-gold-2">Counterpicker</h1>
         </div>
         <button
           type="button"
-          className="hex-frame flex h-9 w-9 items-center justify-center rounded-sm bg-[#132033] text-gold hover:bg-[#1a2a40]"
+          className="hex-frame flex h-9 w-9 items-center justify-center rounded-full bg-[#132033]/70 text-gold hover:bg-[#1a2a40]"
           aria-label={settingsOpen ? "Close settings" : "Open settings"}
           aria-expanded={settingsOpen}
           onClick={() => setSettingsOpen((v) => !v)}
@@ -181,7 +181,7 @@ export default function App() {
         <DraftBoard snap={snap} confidence={confidence} onPatch={patchSettings} />
       )}
 
-      <footer className="mt-auto pt-4 text-[10px] leading-relaxed text-[#8b7d62]">
+      <footer className="mt-auto pt-5 text-[10px] leading-relaxed text-[#8b7d62]">
         {snap.legal}
       </footer>
     </div>
@@ -190,7 +190,7 @@ export default function App() {
 
 function StatusBar({ snap, phase }: { snap: AppSnapshot; phase: string }) {
   return (
-    <div className="hex-frame mb-4 grid grid-cols-2 gap-2 rounded-sm bg-[#0c1828]/80 p-3 text-xs">
+    <div className="hex-frame mb-4 grid grid-cols-2 gap-3 rounded-2xl p-4 text-xs">
       <Stat
         label="Client"
         value={snap.lcu.connected ? snap.lcu.gameName || snap.lcu.summonerName || "Connected" : "Offline"}
@@ -215,7 +215,7 @@ function StatusBar({ snap, phase }: { snap: AppSnapshot; phase: string }) {
           : snap.stats.message}
       </div>
       {snap.stats.ingesting ? (
-        <div className="col-span-2 h-1 overflow-hidden rounded bg-[#1b2c44]">
+        <div className="col-span-2 h-1 overflow-hidden rounded-full bg-[#1b2c44]">
           <div
             className="h-full bg-gold transition-all"
             style={{ width: `${Math.min(100, snap.stats.progress * 100)}%` }}
@@ -237,14 +237,14 @@ function UpdateBanner({
 }) {
   const downloading = update.status === "downloading";
   return (
-    <div className="hex-frame mb-4 flex items-start gap-2 rounded-sm bg-[#1a1608] p-3">
+    <div className="hex-frame mb-4 flex items-start gap-2 rounded-2xl bg-[#1a1608]/55 p-4">
       <button
         type="button"
         className="min-w-0 flex-1 text-left"
         onClick={onDownload}
         disabled={downloading}
       >
-        <div className="font-display text-sm text-gold">{update.message}</div>
+        <div className="text-sm font-medium text-gold">{update.message}</div>
         <div className="mt-0.5 text-[11px] leading-snug text-[#d2c3a0]">
           {downloading
             ? "Saving the installer to your Downloads folder"
@@ -296,9 +296,11 @@ function Stat({ label, value }: { label: string; value: string }) {
 
 function EmptyState({ title, body }: { title: string; body: string }) {
   return (
-    <section className="hex-frame flex flex-1 flex-col items-center justify-center rounded-sm bg-[#0c1828]/70 px-6 py-16 text-center">
-      <div className="mb-4 h-16 w-16 rotate-45 border border-gold/70 bg-[#c8aa6e22]" />
-      <h2 className="font-display text-xl text-gold">{title}</h2>
+    <section className="hex-frame flex flex-1 flex-col items-center justify-center rounded-2xl px-6 py-16 text-center">
+      <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-full border border-gold/35 bg-[#c8aa6e12]">
+        <div className="h-8 w-8 rounded-full border border-gold/70" />
+      </div>
+      <h2 className="font-display text-xl font-medium text-gold">{title}</h2>
       <p className="mt-3 max-w-sm text-sm leading-relaxed text-[#cbb892]">{body}</p>
     </section>
   );
@@ -317,12 +319,12 @@ function DraftBoard({
   return (
     <section className="flex flex-col gap-4">
       <div
-        className={`hex-frame rounded-sm bg-[#0c1828]/85 p-3 ${draft.isOurTurn ? "pulse-gold border-gold" : ""}`}
+        className={`hex-frame rounded-2xl p-4 ${draft.isOurTurn ? "pulse-gold border-gold/50" : ""}`}
       >
         <div className="flex items-center justify-between gap-2">
           <div>
             <div className="text-[10px] uppercase tracking-[0.2em] text-[#7d7159]">Your role</div>
-            <div className="font-display text-lg text-gold">{roleLabel(draft.role)}</div>
+            <div className="font-display text-lg font-medium text-gold">{roleLabel(draft.role)}</div>
           </div>
           <div className="text-right">
             <div className="text-[10px] uppercase tracking-[0.2em] text-[#7d7159]">Pick clock</div>
@@ -336,7 +338,7 @@ function DraftBoard({
             <button
               key={role.id}
               onClick={() => onPatch({ roleOverride: role.id })}
-              className={`rounded-sm px-2 py-1 text-[11px] ${draft.role === role.id ? "bg-gold text-[#0a1428]" : "bg-[#1a2a40] text-[#d7c7a4]"
+              className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${draft.role === role.id ? "bg-gold text-[#0a1428]" : "bg-[#1a2a40]/80 text-[#d7c7a4]"
                 }`}
             >
               {role.label}
@@ -350,12 +352,12 @@ function DraftBoard({
       <TeamRow title="Enemies" slots={draft.enemies} ally={false} />
 
       <div>
-        <h2 className="mb-2 font-display text-sm tracking-[0.14em] text-gold uppercase">
+        <h2 className="mb-2 text-sm font-medium tracking-[0.14em] text-gold uppercase">
           Best available picks
         </h2>
         <div className="flex flex-col gap-2">
           {snap.recommendations.length === 0 ? (
-            <div className="hex-frame rounded-sm bg-[#0c1828]/80 p-4 text-sm text-[#cbb892]">
+            <div className="hex-frame rounded-2xl p-4 text-sm text-[#cbb892]">
               {emptyRecsCopy(snap)}
             </div>
           ) : (
@@ -385,8 +387,8 @@ function TeamRow({ title, slots, ally }: { title: string; slots: ChampionSlot[];
         {filled.map((slot) => (
           <div
             key={`${title}-${slot.cellId}`}
-            className={`hex-frame flex h-14 w-14 items-center justify-center overflow-hidden rounded-sm ${ally ? "bg-[#10283a]" : "bg-[#2a1418]"
-              } ${slot.isLocal ? "ring-1 ring-gold" : ""}`}
+            className={`hex-frame flex h-14 w-14 items-center justify-center overflow-hidden rounded-xl ${ally ? "bg-[#10283a]/70" : "bg-[#2a1418]/70"
+              } ${slot.isLocal ? "ring-1 ring-gold/70" : ""}`}
             title={slot.assignedPosition}
           >
             {slot.displayChampionId > 0 ? (
@@ -408,9 +410,9 @@ function TeamRow({ title, slots, ally }: { title: string; slots: ChampionSlot[];
 function RecCard({ rec, rank, active }: { rec: Recommendation; rank: number; active: boolean }) {
   return (
     <article
-      className={`hex-frame flex gap-3 rounded-sm bg-[#0c1828]/90 p-2.5 ${active ? "pulse-gold" : ""}`}
+      className={`hex-frame flex gap-3 rounded-2xl p-3 ${active ? "pulse-gold" : ""}`}
     >
-      <div className="relative h-14 w-14 overflow-hidden rounded-sm border border-gold/40">
+      <div className="relative h-14 w-14 overflow-hidden rounded-xl border border-gold/25">
         <img src={rec.iconUrl} alt={rec.name} className="h-full w-full object-cover" />
         <span className="absolute left-0 top-0 bg-gold px-1.5 text-[10px] font-bold text-[#0a1428]">
           {rank}
@@ -418,7 +420,7 @@ function RecCard({ rec, rank, active }: { rec: Recommendation; rank: number; act
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline justify-between gap-2">
-          <h3 className="truncate font-display text-base text-gold-2">{rec.name}</h3>
+          <h3 className="truncate font-display text-base font-medium text-gold-2">{rec.name}</h3>
           <span className="text-xs text-gold">{rec.score.toFixed(2)}</span>
         </div>
         <p className="mt-0.5 text-xs leading-snug text-[#d2c3a0]">{rec.reason}</p>
@@ -457,10 +459,10 @@ function SettingsToggle({
   description: string;
 }) {
   return (
-    <label className="mb-3 flex items-start gap-2 text-xs text-[#d2c3a0]">
+    <label className="mb-3 flex items-start gap-3 text-xs text-[#d2c3a0]">
       <input
         type="checkbox"
-        className="mt-0.5"
+        className="switch mt-0.5"
         checked={checked}
         onChange={(e) => onChange(e.target.checked)}
       />
@@ -480,12 +482,12 @@ function SettingsPanel({
   onPatch: (p: Record<string, unknown>) => void;
 }) {
   return (
-    <section className="hex-frame mb-4 rounded-sm bg-[#0c1828] p-3 text-sm">
-      <h2 className="mb-3 font-display text-gold">Settings</h2>
-      <label className="mb-2 block text-xs text-[#b9a888]">
+    <section className="hex-frame mb-4 rounded-2xl p-4 text-sm">
+      <h2 className="mb-3 text-sm font-medium tracking-[0.14em] text-gold uppercase">Settings</h2>
+      <label className="mb-3 block text-xs text-[#b9a888]">
         Rank bracket
         <select
-          className="mt-1 w-full rounded-sm border border-gold/30 bg-[#102036] p-2 text-gold-2"
+          className="mt-1.5 w-full rounded-xl border border-gold/20 bg-[#102036]/80 p-2.5 text-gold-2"
           value={snap.settings.rankBracket}
           onChange={(e) => onPatch({ rankBracket: e.target.value })}
         >
@@ -518,7 +520,7 @@ function SettingsPanel({
       <div className="flex items-center justify-between gap-2">
         <button
           type="button"
-          className="rounded-sm border border-gold/40 px-3 py-1.5 text-xs text-gold"
+          className="rounded-full border border-gold/30 px-3 py-1.5 text-xs font-medium text-gold"
           onClick={() => invoke("refresh_stats")}
         >
           Refresh stats
