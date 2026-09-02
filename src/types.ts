@@ -62,6 +62,7 @@ export type AppSnapshot = {
   };
   catalogReady: boolean;
   legal: string;
+  version: string;
   update: {
     version: string;
     downloadUrl: string;
