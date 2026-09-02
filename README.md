@@ -1,4 +1,4 @@
-# League of Legends Rift Counterpick
+# League of Legends Counterpicker
 
 A small Windows overlay for League of Legends that runs during the pre-game lobby. It watches your live session, then ranks a top 5 champions for **your role** as people lock and hover.
 
