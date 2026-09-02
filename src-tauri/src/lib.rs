@@ -161,7 +161,7 @@ async fn download_update(app: AppHandle, state: State<'_, Arc<AppState>>) -> Res
             let snap = inner.snapshot();
             drop(inner);
             emit_snapshot(&app, &snap);
-            if let Err(err) = app.opener().open_path(&dest, None::<&str>) {
+            if let Err(err) = app.opener().open_path(dest.to_string_lossy().as_ref(), None::<&str>) {
                 let mut inner = state.inner.lock().await;
                 if let Some(update) = inner.update.as_mut() {
                     update.status = "ready".into();

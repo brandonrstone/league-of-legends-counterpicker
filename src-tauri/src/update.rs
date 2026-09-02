@@ -23,7 +23,8 @@ pub fn normalize_version(raw: &str) -> String {
 }
 
 pub fn parse_version(raw: &str) -> Option<(u64, u64, u64)> {
-    let mut parts = normalize_version(raw).split('.');
+    let normalized = normalize_version(raw);
+    let mut parts = normalized.split('.');
     let major = parts.next()?.parse().ok()?;
     let minor = parts.next().unwrap_or("0").parse().ok()?;
     let patch = parts.next().unwrap_or("0").parse().ok()?;
