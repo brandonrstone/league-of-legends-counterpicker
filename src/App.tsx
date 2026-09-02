@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { AppSnapshot, ChampionSlot, Recommendation } from "./types";
+import { fetchGithubUpdate, previewCurrentVersion } from "./update";
 
 const emptySnap = (): AppSnapshot => ({
   lcu: { connected: false, summonerName: null, gameName: null, detectedRank: null },
@@ -26,6 +27,7 @@ const emptySnap = (): AppSnapshot => ({
   },
   catalogReady: false,
   legal: "",
+  update: null,
 });
 
 const ROLES = [
@@ -59,7 +61,13 @@ export default function App() {
       try {
         setSnap(await invoke<AppSnapshot>("get_snapshot"));
       } catch {
-        /* backend still booting */
+        const asVersion = previewCurrentVersion();
+        if (asVersion) {
+          const update = await fetchGithubUpdate(asVersion).catch(() => null);
+          if (update) {
+            setSnap((prev) => ({ ...prev, update }));
+          }
+        }
       }
       unlisten = await listen<AppSnapshot>("snapshot", (event) => setSnap(event.payload));
     })();
@@ -76,6 +84,52 @@ export default function App() {
   async function patchSettings(partial: Record<string, unknown>) {
     const next = await invoke<AppSnapshot>("update_settings", { patch: partial });
     setSnap(next);
+  }
+
+  async function onDownloadUpdate() {
+    const update = snap.update;
+    if (!update || update.status === "downloading") return;
+    setSnap((prev) =>
+      prev.update
+        ? {
+            ...prev,
+            update: {
+              ...prev.update,
+              status: "downloading",
+              message: `Downloading ${prev.update.version}…`,
+            },
+          }
+        : prev,
+    );
+    try {
+      await invoke("download_update");
+    } catch {
+      window.open(update.downloadUrl, "_blank", "noopener,noreferrer");
+      setSnap((prev) =>
+        prev.update
+          ? {
+              ...prev,
+              update: {
+                ...prev.update,
+                status: "ready",
+                progress: 1,
+                message: "Download started",
+              },
+            }
+          : prev,
+      );
+    }
+  }
+
+  async function onDismissUpdate(event: MouseEvent) {
+    event.stopPropagation();
+    event.preventDefault();
+    try {
+      const next = await invoke<AppSnapshot>("dismiss_update");
+      setSnap(next);
+    } catch {
+      setSnap((prev) => ({ ...prev, update: null }));
+    }
   }
 
   return (
@@ -97,6 +151,14 @@ export default function App() {
           <GearIcon open={settingsOpen} />
         </button>
       </header>
+
+      {snap.update ? (
+        <UpdateBanner
+          update={snap.update}
+          onDownload={onDownloadUpdate}
+          onDismiss={onDismissUpdate}
+        />
+      ) : null}
 
       <StatusBar snap={snap} phase={phase} />
 
@@ -159,6 +221,47 @@ function StatusBar({ snap, phase }: { snap: AppSnapshot; phase: string }) {
           />
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function UpdateBanner({
+  update,
+  onDownload,
+  onDismiss,
+}: {
+  update: NonNullable<AppSnapshot["update"]>;
+  onDownload: () => void;
+  onDismiss: (event: MouseEvent) => void;
+}) {
+  const downloading = update.status === "downloading";
+  return (
+    <div className="hex-frame mb-4 flex items-start gap-2 rounded-sm bg-[#1a1608] p-3">
+      <button
+        type="button"
+        className="min-w-0 flex-1 text-left"
+        onClick={onDownload}
+        disabled={downloading}
+      >
+        <div className="font-display text-sm text-gold">{update.message}</div>
+        <div className="mt-0.5 text-[11px] leading-snug text-[#d2c3a0]">
+          {downloading
+            ? "Saving the installer to your Downloads folder"
+            : update.status === "ready"
+              ? "Run the setup when it opens to upgrade in place"
+              : update.status === "error"
+                ? "Click to try again, or get it from GitHub Releases"
+                : "Click to download the new installer and run it"}
+        </div>
+      </button>
+      <button
+        type="button"
+        className="shrink-0 px-1.5 text-base leading-none text-[#8b7d62] hover:text-gold-2"
+        aria-label="Dismiss update"
+        onClick={onDismiss}
+      >
+        ×
+      </button>
     </div>
   );
 }

@@ -62,4 +62,12 @@ export type AppSnapshot = {
   };
   catalogReady: boolean;
   legal: string;
+  update: {
+    version: string;
+    downloadUrl: string;
+    assetName: string;
+    status: string;
+    progress: number;
+    message: string;
+  } | null;
 };
