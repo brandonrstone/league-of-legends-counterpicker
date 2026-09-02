@@ -319,7 +319,7 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
         let mut builder = TrayIconBuilder::with_id("main-tray")
             .menu(&menu)
             .show_menu_on_left_click(false)
-            .tooltip("Rift Counterpick")
+            .tooltip("League of Legends Counterpicker")
             .on_menu_event(on_tray_menu)
             .on_tray_icon_event(on_tray_icon);
         if let Some(icon) = app.default_window_icon() {

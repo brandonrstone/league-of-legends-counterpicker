@@ -137,9 +137,9 @@ export default function App() {
       <header className="mb-4 flex items-start justify-between gap-3">
         <div>
           <p className="font-display text-[11px] tracking-[0.28em] text-gold uppercase">
-            Pre-game companion
+            League of Legends
           </p>
-          <h1 className="font-display text-2xl font-bold text-gold-2">Rift Counterpick</h1>
+          <h1 className="font-display text-2xl font-bold text-gold-2">Counterpicker</h1>
         </div>
         <button
           type="button"
