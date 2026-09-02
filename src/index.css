@@ -70,6 +70,33 @@ body,
   transform: rotate(45deg);
 }
 
+.seek-ring,
+.seek-ring-inner {
+  transform-origin: 50% 50%;
+  will-change: transform, opacity;
+}
+
+.seek-ring {
+  animation: seekPulse 2.8s ease-in-out infinite;
+}
+
+.seek-ring-inner {
+  animation: seekPulse 2.8s ease-in-out infinite;
+  animation-delay: 0.45s;
+}
+
+@keyframes seekPulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.55;
+  }
+  50% {
+    transform: scale(1.07);
+    opacity: 1;
+  }
+}
+
 .switch {
   appearance: none;
   width: 1.75rem;

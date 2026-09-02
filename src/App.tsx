@@ -144,7 +144,7 @@ export default function App() {
         </div>
         <button
           type="button"
-          className="hex-frame flex h-9 w-9 items-center justify-center rounded-full bg-[#132033]/70 text-gold hover:bg-[#1a2a40]"
+          className="hex-frame flex h-9 w-9 cursor-pointer items-center justify-center rounded-full bg-[#132033]/70 text-gold hover:bg-[#1a2a40]"
           aria-label={settingsOpen ? "Close settings" : "Open settings"}
           aria-expanded={settingsOpen}
           onClick={() => setSettingsOpen((v) => !v)}
@@ -171,6 +171,7 @@ export default function App() {
         <EmptyState
           title="Waiting for League Client"
           body="Open the League client and stay in a lobby. This app reads live champion select from your PC — it cannot work as a website."
+          seeking
         />
       ) : !inDraft ? (
         <EmptyState
@@ -294,11 +295,16 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function EmptyState({ title, body }: { title: string; body: string }) {
+function EmptyState({ title, body, seeking = false }: { title: string; body: string; seeking?: boolean }) {
   return (
     <section className="hex-frame flex flex-1 flex-col items-center justify-center rounded-2xl px-6 py-16 text-center">
-      <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-full border border-gold/35 bg-[#c8aa6e12]">
-        <div className="h-8 w-8 rounded-full border border-gold/70" />
+      <div className="relative mb-5 h-16 w-16">
+        <div
+          className={`absolute inset-0 rounded-full border border-gold/35 bg-[#c8aa6e12] ${seeking ? "seek-ring" : ""}`}
+        />
+        <div
+          className={`absolute inset-[18px] rounded-full border border-gold/70 ${seeking ? "seek-ring-inner" : ""}`}
+        />
       </div>
       <h2 className="font-display text-xl font-medium text-gold">{title}</h2>
       <p className="mt-3 max-w-sm text-sm leading-relaxed text-[#cbb892]">{body}</p>
