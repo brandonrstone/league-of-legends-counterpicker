@@ -71,7 +71,7 @@ pub fn safe_filename(name: &str) -> String {
         .file_name()
         .and_then(|s| s.to_str())
         .filter(|s| !s.is_empty() && *s != "." && *s != "..")
-        .unwrap_or("RiftCounterpick-setup.exe")
+        .unwrap_or("LeagueOfLegendsCounterpicker-setup.exe")
         .to_string()
 }
 
@@ -79,7 +79,7 @@ pub async fn fetch_latest_release(client: &reqwest::Client) -> Result<GithubRele
     let url = format!("https://api.github.com/repos/{GITHUB_REPO}/releases/latest");
     let res = client
         .get(url)
-        .header("User-Agent", "Rift-Counterpick")
+        .header("User-Agent", "League-of-Legends-Counterpicker")
         .header("Accept", "application/vnd.github+json")
         .timeout(Duration::from_secs(12))
         .send()
@@ -97,7 +97,7 @@ pub async fn download_installer(
 ) -> Result<()> {
     let res = client
         .get(url)
-        .header("User-Agent", "Rift-Counterpick")
+        .header("User-Agent", "League-of-Legends-Counterpicker")
         .timeout(Duration::from_secs(180))
         .send()
         .await?;

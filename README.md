@@ -52,8 +52,8 @@ You only need Node and Rust to *build*. After that it is a regular Windows app.
 1. Install [Node.js 22+](https://nodejs.org/) and [Rust](https://rustup.rs/).
 2. `npm install`
 3. `npm run build:app`
-4. Run the installer in `src-tauri/target/release/bundle/nsis/` (`Rift Counterpick_1.0.2_x64-setup.exe`).
-5. Open **Rift Counterpick** from the Start Menu.
+4. Run the installer in `src-tauri/target/release/bundle/nsis/` (`League of Legends Counterpicker_1.0.3_x64-setup.exe`).
+5. Open **League of Legends Counterpicker** from the Start Menu.
 
 When you change the code later, build again and re-run the new setup. It upgrades in place.
 
@@ -72,4 +72,4 @@ Open League, queue up, and wait for champ select. Closing that terminal closes t
 
 Lobby state comes from the League client on your machine. Matchup and synergy numbers come from [Lolalytics](https://lolalytics.com) and are stored in a local SQLite file (`stats.sqlite` under your app data folder). The ranking math is ours — we do not invent counters by hand.
 
-Rift Counterpick is not endorsed by Riot Games and does not reflect the views or opinions of Riot Games or anyone officially involved in producing or managing Riot Games properties. Riot Games and all associated properties are trademarks or registered trademarks of Riot Games, Inc.
+League of Legends Counterpicker is not endorsed by Riot Games and does not reflect the views or opinions of Riot Games or anyone officially involved in producing or managing Riot Games properties. Riot Games and all associated properties are trademarks or registered trademarks of Riot Games, Inc.
