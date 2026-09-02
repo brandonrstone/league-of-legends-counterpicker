@@ -27,6 +27,7 @@ const emptySnap = (): AppSnapshot => ({
   },
   catalogReady: false,
   legal: "",
+  version: "1.0.3",
   update: null,
 });
 
@@ -514,7 +515,7 @@ function SettingsPanel({
         title="Always on top"
         description="Keeps this overlay above the League client so you can see picks during champ select. Turn it off if the window is covering the client and you would rather Alt-Tab to it."
       />
-      <div className="flex gap-2">
+      <div className="flex items-center justify-between gap-2">
         <button
           type="button"
           className="rounded-sm border border-gold/40 px-3 py-1.5 text-xs text-gold"
@@ -522,6 +523,9 @@ function SettingsPanel({
         >
           Refresh stats
         </button>
+        <p className="text-[10px] uppercase tracking-[0.18em] text-[#7d7159]">
+          Version {snap.version}
+        </p>
       </div>
     </section>
   );

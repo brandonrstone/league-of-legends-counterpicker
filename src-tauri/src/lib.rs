@@ -59,6 +59,7 @@ impl InnerState {
             catalog_ready: self.catalog.is_some(),
             legal: legal_boilerplate(),
             update: self.update.clone(),
+            version: self.current_version.clone(),
         }
     }
 }

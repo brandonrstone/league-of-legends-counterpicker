@@ -106,6 +106,7 @@ pub struct AppSnapshot {
     pub catalog_ready: bool,
     pub legal: String,
     pub update: Option<AppUpdate>,
+    pub version: String,
 }
 
 impl Default for LcuStatus {
