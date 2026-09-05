@@ -524,7 +524,7 @@ async fn lcu_loop(app: AppHandle, state: Arc<AppState>) {
 async fn refresh_from_lcu(app: &AppHandle, state: &Arc<AppState>, client: &LcuHttp) {
     let summoner = client.current_summoner().await.ok();
     let phase = client.gameflow_phase().await.ok();
-    let ranked = client.ranked_tier().await;
+    let ranked = client.ranked_tier(client.current_queue_id().await).await;
     let owned = client.owned_champion_ids().await.unwrap_or_default();
     let masteries = client.champion_masteries().await.unwrap_or_default();
     let mut mastery = HashMap::new();

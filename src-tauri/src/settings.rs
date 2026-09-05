@@ -49,12 +49,18 @@ impl Settings {
     }
 }
 
+/// Lolalytics has no `silver_plus` style bucket below gold, so the low tiers map
+/// to their own single-tier tables instead. Unranked keeps falling back to
+/// Emerald+, which is the closest thing to an average lobby.
 pub fn tier_to_bracket(tier: &str) -> String {
     match tier.to_ascii_uppercase().as_str() {
         "CHALLENGER" | "GRANDMASTER" | "MASTER" | "DIAMOND" => "diamond_plus".into(),
         "EMERALD" => "emerald_plus".into(),
         "PLATINUM" => "platinum_plus".into(),
         "GOLD" => "gold_plus".into(),
+        "SILVER" => "silver".into(),
+        "BRONZE" => "bronze".into(),
+        "IRON" => "iron".into(),
         _ => "emerald_plus".into(),
     }
 }
@@ -88,7 +94,18 @@ mod tests {
     fn maps_known_tiers_to_brackets() {
         assert_eq!(tier_to_bracket("diamond"), "diamond_plus");
         assert_eq!(tier_to_bracket("GOLD"), "gold_plus");
-        assert_eq!(tier_to_bracket("iron"), "emerald_plus");
+    }
+
+    #[test]
+    fn low_tiers_stop_being_served_emerald_stats() {
+        assert_eq!(tier_to_bracket("silver"), "silver");
+        assert_eq!(tier_to_bracket("BRONZE"), "bronze");
+        assert_eq!(tier_to_bracket("iron"), "iron");
+        assert_eq!(
+            tier_to_bracket(""),
+            "emerald_plus",
+            "unranked still has no bracket of its own"
+        );
     }
 
     #[test]

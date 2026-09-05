@@ -498,10 +498,13 @@ function SettingsPanel({
           onChange={(e) => onPatch({ rankBracket: e.target.value })}
         >
           <option value="auto">Auto from rank</option>
-          <option value="emerald_plus">Emerald+</option>
           <option value="diamond_plus">Diamond+</option>
+          <option value="emerald_plus">Emerald+</option>
           <option value="platinum_plus">Platinum+</option>
           <option value="gold_plus">Gold+</option>
+          <option value="silver">Silver</option>
+          <option value="bronze">Bronze</option>
+          <option value="iron">Iron</option>
           <option value="all">All ranks</option>
         </select>
       </label>

@@ -141,7 +141,24 @@ pub struct ChampionMastery {
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct GameflowSession {
     #[serde(default)]
     pub phase: String,
+    #[serde(default)]
+    pub game_data: GameflowData,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GameflowData {
+    #[serde(default)]
+    pub queue: GameflowQueue,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GameflowQueue {
+    #[serde(default)]
+    pub id: i64,
 }
