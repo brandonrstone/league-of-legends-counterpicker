@@ -255,12 +255,14 @@ function UpdateBanner({
     <div className="hex-frame mb-4 flex items-start gap-2 rounded-2xl bg-[#1a1608]/55 p-4">
       <button
         type="button"
-        className="min-w-0 flex-1 text-left"
+        className="group min-w-0 flex-1 cursor-pointer text-left disabled:cursor-default disabled:pointer-events-none"
         onClick={onDownload}
         disabled={downloading}
       >
-        <div className="text-sm font-medium text-gold">{update.message}</div>
-        <div className="mt-0.5 text-[11px] leading-snug text-[#d2c3a0]">
+        <div className="text-sm font-medium text-gold transition-colors group-hover:text-gold-2">
+          {update.message}
+        </div>
+        <div className="mt-0.5 text-[11px] leading-snug text-[#d2c3a0] transition-colors group-hover:text-gold">
           {downloading
             ? "Saving the installer to your Downloads folder"
             : update.status === "ready"
@@ -272,7 +274,7 @@ function UpdateBanner({
       </button>
       <button
         type="button"
-        className="shrink-0 px-1.5 text-base leading-none text-[#8b7d62] hover:text-gold-2"
+        className="shrink-0 cursor-pointer px-1.5 text-base leading-none text-[#8b7d62] hover:text-gold-2"
         aria-label="Dismiss update"
         onClick={onDismiss}
       >
