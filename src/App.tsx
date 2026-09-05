@@ -175,7 +175,7 @@ export default function App() {
         />
       ) : null}
 
-      <StatusBar snap={snap} phase={phase} />
+      <StatusBar snap={snap} phase={phase} showVersion={settingsOpen} />
 
       {settingsOpen ? (
         <SettingsPanel snap={snap} onPatch={patchSettings} />
@@ -203,7 +203,15 @@ export default function App() {
   );
 }
 
-function StatusBar({ snap, phase }: { snap: AppSnapshot; phase: string }) {
+function StatusBar({
+  snap,
+  phase,
+  showVersion,
+}: {
+  snap: AppSnapshot;
+  phase: string;
+  showVersion: boolean;
+}) {
   return (
     <div className="hex-frame mb-4 grid grid-cols-2 gap-3 rounded-2xl p-4 text-xs">
       <Stat
@@ -224,10 +232,28 @@ function StatusBar({ snap, phase }: { snap: AppSnapshot; phase: string }) {
                 : "Loading"
         }
       />
-      <div className={`col-span-2 ${snap.stats.ingesting ? "text-gold-2" : "text-[#b9a888]"}`}>
-        {snap.stats.ingesting
-          ? `${snap.stats.message}  ·  ${Math.round(snap.stats.progress * 100)}%`
-          : snap.stats.message}
+      {showVersion ? <Stat label="App Version" value={snap.version} /> : null}
+      <div
+        className={`col-span-2 flex items-center gap-2 ${snap.stats.ingesting ? "text-gold-2" : "text-[#b9a888]"}`}
+      >
+        <span className="min-w-0 truncate">
+          {snap.stats.ingesting
+            ? `${snap.stats.message}  ·  ${Math.round(snap.stats.progress * 100)}%`
+            : snap.stats.message}
+        </span>
+        <span aria-hidden="true" className="text-[#5f5642]">
+          ·
+        </span>
+        <button
+          type="button"
+          className="refresh-action shrink-0"
+          onClick={() => invoke("refresh_stats")}
+          disabled={snap.stats.ingesting}
+          title="Refresh stats"
+          aria-label="Refresh stats"
+        >
+          <RefreshIcon />
+        </button>
       </div>
       {snap.stats.ingesting ? (
         <div className="col-span-2 h-1 overflow-hidden rounded-full bg-[#1b2c44]">
@@ -469,19 +495,43 @@ function GearIcon({ open }: { open: boolean }) {
   );
 }
 
+function RefreshIcon() {
+  return (
+    <svg
+      className="h-3.5 w-3.5"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M20 11.5a8 8 0 0 0-13.7-5.2L3 9.2" />
+      <path d="M4 12.5a8 8 0 0 0 13.7 5.2L21 14.8" />
+      <path d="M3 4.5v4.7h4.7" />
+      <path d="M21 19.5v-4.7h-4.7" />
+    </svg>
+  );
+}
+
 function SettingsToggle({
   checked,
   onChange,
   title,
   description,
+  last = false,
 }: {
   checked: boolean;
   onChange: (next: boolean) => void;
   title: string;
   description: string;
+  last?: boolean;
 }) {
   return (
-    <label className="mb-3 flex items-start gap-3 text-xs text-[#d2c3a0]">
+    <label
+      className={`flex items-start gap-3 text-xs text-[#d2c3a0] ${last ? "" : "mb-3"}`}
+    >
       <input
         type="checkbox"
         className="switch mt-0.5"
@@ -509,7 +559,7 @@ function SettingsPanel({
       <label className="mb-3 block text-xs text-[#b9a888]">
         Rank bracket
         <select
-          className="mt-1.5 w-full rounded-xl border border-gold/20 bg-[#102036]/80 p-2.5 text-gold-2"
+          className="mt-1.5 w-full cursor-pointer rounded-xl border border-gold/20 bg-[#102036]/80 p-2.5 text-gold-2"
           value={snap.settings.rankBracket}
           onChange={(e) => onPatch({ rankBracket: e.target.value })}
         >
@@ -534,26 +584,15 @@ function SettingsPanel({
         checked={snap.settings.comfortWeighting}
         onChange={(v) => onPatch({ comfortWeighting: v })}
         title="Weight by champion mastery"
-        description="Gives a small score bump to champs you have played more. Lane and team matchups still matter more — this just leans the list toward champs you already know."
+        description="Leans the list toward champs you have played, and stops niche picks from being discounted when you are the one-trick. Lane and team matchups still matter more."
       />
       <SettingsToggle
         checked={snap.settings.alwaysOnTop}
         onChange={(v) => onPatch({ alwaysOnTop: v })}
         title="Always on top"
         description="Keeps this overlay above the League client so you can see picks during champ select. Turn it off if the window is covering the client and you would rather Alt-Tab to it."
+        last
       />
-      <div className="flex items-center justify-between gap-2">
-        <button
-          type="button"
-          className="rounded-full border border-gold/30 px-3 py-1.5 text-xs font-medium text-gold"
-          onClick={() => invoke("refresh_stats")}
-        >
-          Refresh stats
-        </button>
-        <p className="text-[10px] uppercase tracking-[0.18em] text-[#7d7159]">
-          Version {snap.version}
-        </p>
-      </div>
     </section>
   );
 }
