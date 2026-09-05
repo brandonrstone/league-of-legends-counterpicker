@@ -318,12 +318,15 @@ impl StatsDb {
         .ok()
     }
 
+    /// Games-weighted mean win rate across this champion's lane matchups, so a
+    /// 40-game matchup no longer counts as much as a 40,000-game one.
     pub fn flexibility(&self, champion_id: i64, role: &str, rank: &str, patch: &str) -> Option<f64> {
         let (rank, patch) = self.resolve_stats_key(rank, patch);
         let conn = self.conn.lock().ok()?;
         conn.query_row(
-            "SELECT AVG(winrate) FROM matchups
-             WHERE champion_id = ?1 AND role = ?2 AND kind = 'lane' AND rank = ?3 AND patch = ?4",
+            "SELECT SUM(winrate * games) / SUM(games) FROM matchups
+             WHERE champion_id = ?1 AND role = ?2 AND kind = 'lane' AND rank = ?3 AND patch = ?4
+               AND games > 0",
             params![champion_id, role, rank, patch],
             |row| row.get::<_, Option<f64>>(0),
         )

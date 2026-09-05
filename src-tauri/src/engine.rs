@@ -1,10 +1,30 @@
 use crate::catalog::Catalog;
 use crate::models::{DraftView, Recommendation};
-use crate::stats::store::{MatchupStat, StatsDb};
+use crate::stats::store::{MatchupStat, RoleMeta, StatsDb};
 use std::collections::{HashMap, HashSet};
 
 const PRIOR_N: f64 = 1000.0;
 const PRIOR_WR: f64 = 50.0;
+
+/// Role samples are two orders of magnitude larger than matchup samples
+/// (tens of thousands of games, not tens), so they need their own prior or
+/// shrinkage would be a rounding error.
+const META_PRIOR_N: f64 = 20_000.0;
+
+/// Flexibility is a summary of many matchups, so its sample size would swamp
+/// `PRIOR_N`. Damping it by a fixed effective N keeps the term's magnitude in
+/// line with the weights it is scored against.
+const FLEX_EFFECTIVE_N: i64 = 5_000;
+
+/// Above this share of a champion's games, the role is their home lane.
+const HOME_LANE_PCT: f64 = 60.0;
+/// Below this share, they are a visitor and their win rate is mostly specialists.
+const VISITOR_LANE_PCT: f64 = 20.0;
+/// Pick rates (percent of games in the lane) bracketing "commonly picked" and "rare".
+const COMMON_PICKRATE: f64 = 3.0;
+const RARE_PICKRATE: f64 = 0.5;
+/// Most of a niche champion's win-rate edge that we are willing to discount.
+const MAX_SPECIALIST_DISCOUNT: f64 = 0.5;
 
 #[derive(Clone, Debug)]
 pub struct ScoreContext {
@@ -93,11 +113,9 @@ pub fn recommend(
     let weights = weights(lane_enemy_id.is_some(), locked_enemies.len());
     let mut scored = Vec::new();
 
-    let pool: HashSet<i64> = db
-        .champions_in_role(role, &ctx.rank, &ctx.patch)
-        .into_iter()
-        .map(|(id, _)| id)
-        .collect();
+    let pool_rows = db.champions_in_role(role, &ctx.rank, &ctx.patch);
+    let baseline = role_baseline(&pool_rows);
+    let pool: HashSet<i64> = pool_rows.iter().map(|(id, _)| *id).collect();
     let mut candidates = pool.clone();
     if !ctx.pickable.is_empty() {
         candidates = soft_filter(&pool, &ctx.pickable, &banned, &taken, catalog);
@@ -163,12 +181,27 @@ pub fn recommend(
 
         let flex = db
             .flexibility(champ_id, role, &ctx.rank, &ctx.patch)
-            .map(|avg| shrink(avg, 5000) - 50.0)
+            .map(|avg| shrink_toward(avg, FLEX_EFFECTIVE_N, baseline, PRIOR_N) - baseline)
             .unwrap_or(0.0);
         let meta_wr = meta.winrate;
-        let meta_delta = meta_wr - 50.0;
+        let mastery = ctx.mastery.get(&champ_id).copied();
+        let familiarity = if ctx.comfort_weighting {
+            familiarity(mastery)
+        } else {
+            0.0
+        };
+        let skew = specialist_skew(&meta, role) * (1.0 - familiarity);
+        let meta_delta = {
+            let shrunk = shrink_toward(meta_wr, meta.games, baseline, META_PRIOR_N) - baseline;
+            // Only discount an edge, never soften a deficit into a recommendation.
+            if shrunk > 0.0 {
+                shrunk * (1.0 - MAX_SPECIALIST_DISCOUNT * skew)
+            } else {
+                shrunk
+            }
+        };
         let comfort = if ctx.comfort_weighting {
-            comfort_score(ctx.mastery.get(&champ_id).copied()).min(0.15)
+            comfort_score(mastery).min(0.15)
         } else {
             0.0
         };
@@ -189,6 +222,8 @@ pub fn recommend(
             best_ally.map(|(id, _)| id),
             meta_wr,
             locked_enemies.len(),
+            skew,
+            role,
         );
 
         scored.push(Scored {
@@ -203,6 +238,8 @@ pub fn recommend(
                 team_delta,
                 synergy_delta,
                 meta_wr: Some(meta_wr),
+                meta_games: Some(meta.games),
+                meta_pickrate: (meta.pickrate > 0.0).then_some(meta.pickrate),
             },
             games: meta.games,
         });
@@ -314,13 +351,74 @@ fn is_duo_lane(a: &str, b: &str) -> bool {
     (a == "bottom" && b == "support") || (a == "support" && b == "bottom")
 }
 
-pub fn shrink(wr: f64, games: i64) -> f64 {
+fn shrink_toward(wr: f64, games: i64, prior_wr: f64, prior_n: f64) -> f64 {
     let g = games.max(0) as f64;
-    (g * wr + PRIOR_N * PRIOR_WR) / (g + PRIOR_N)
+    (g * wr + prior_n * prior_wr) / (g + prior_n)
+}
+
+pub fn shrink(wr: f64, games: i64) -> f64 {
+    shrink_toward(wr, games, PRIOR_WR, PRIOR_N)
 }
 
 fn shrunk_delta(stat: &MatchupStat) -> f64 {
     shrink(stat.winrate, stat.games) - 50.0
+}
+
+/// The win rate of an average game in this role. Roles do not sit at 50% —
+/// measured jungle data runs closer to 52% — so scoring against a flat 50
+/// hands every champion in the role the same free head start.
+fn role_baseline(pool: &[(i64, RoleMeta)]) -> f64 {
+    let total: i64 = pool.iter().map(|(_, m)| m.games.max(0)).sum();
+    if total <= 0 {
+        return PRIOR_WR;
+    }
+    let weighted: f64 = pool
+        .iter()
+        .map(|(_, m)| m.winrate * m.games.max(0) as f64)
+        .sum();
+    weighted / total as f64
+}
+
+fn ramp(value: f64, zero_at: f64, one_at: f64) -> f64 {
+    if (zero_at - one_at).abs() < f64::EPSILON {
+        return 0.0;
+    }
+    ((zero_at - value) / (zero_at - one_at)).clamp(0.0, 1.0)
+}
+
+/// How much of a champion's win rate in this role is likely to come from the
+/// small group of people who actually play them there. A champion who is rarely
+/// picked, and rarely picked *in this lane*, posts numbers the average player
+/// will not reproduce. Both signals are skipped when the cached row has no data
+/// for them rather than being read as zero.
+fn specialist_skew(meta: &RoleMeta, role: &str) -> f64 {
+    let mut signals = Vec::new();
+    if meta.pct_lane > 0.0 {
+        let native = !meta.default_lane.is_empty() && meta.default_lane == role;
+        signals.push(if native {
+            0.0
+        } else {
+            ramp(meta.pct_lane, HOME_LANE_PCT, VISITOR_LANE_PCT)
+        });
+    }
+    if meta.pickrate > 0.0 {
+        signals.push(ramp(meta.pickrate, COMMON_PICKRATE, RARE_PICKRATE));
+    }
+    if signals.is_empty() {
+        return 0.0;
+    }
+    signals.iter().sum::<f64>() / signals.len() as f64
+}
+
+/// How much the player has actually played this champion, used to cancel the
+/// specialist discount: if they are the one-trick, the specialist win rate is theirs.
+fn familiarity(mastery: Option<(i64, i64)>) -> f64 {
+    let Some((level, points)) = mastery else {
+        return 0.0;
+    };
+    let by_level = ((level as f64 - 3.0) / 4.0).clamp(0.0, 1.0);
+    let by_points = (points as f64 / 50_000.0).clamp(0.0, 1.0);
+    by_level.max(by_points)
 }
 
 fn comfort_score(mastery: Option<(i64, i64)>) -> f64 {
@@ -341,6 +439,8 @@ fn build_reason(
     ally: Option<i64>,
     meta_wr: f64,
     enemies_locked: usize,
+    skew: f64,
+    role: &str,
 ) -> String {
     let mut parts = Vec::new();
     if let (Some(delta), Some(enemy_id)) = (lane_delta, lane_enemy) {
@@ -369,7 +469,24 @@ fn build_reason(
             parts.push(format!("{meta_wr:.1}% role win rate this patch"));
         }
     }
+    if skew >= 0.5 {
+        parts.push(format!(
+            "niche {} pick, mostly one-tricks",
+            role_label(role)
+        ));
+    }
     parts.join(" · ")
+}
+
+fn role_label(role: &str) -> &str {
+    match role {
+        "top" => "top",
+        "jungle" => "jungle",
+        "middle" => "mid",
+        "bottom" => "ADC",
+        "support" => "support",
+        other => other,
+    }
 }
 
 #[cfg(test)]
@@ -393,6 +510,8 @@ mod tests {
     const NAMI: i64 = 267;
     const LULU: i64 = 117;
     const THRESH: i64 = 412;
+    const ZYRA: i64 = 143;
+    const WUKONG: i64 = 62;
 
     fn champ(id: i64, name: &str) -> ChampionInfo {
         ChampionInfo {
@@ -417,6 +536,8 @@ mod tests {
             champ(NAMI, "Nami"),
             champ(LULU, "Lulu"),
             champ(THRESH, "Thresh"),
+            champ(ZYRA, "Zyra"),
+            champ(WUKONG, "Wukong"),
         ];
         let mut catalog = Catalog {
             patch: PATCH.to_string(),
@@ -476,6 +597,67 @@ mod tests {
             .unwrap();
         db.upsert_role_stat(SINGED, "top", RANK, PATCH, &off_role_meta())
             .unwrap();
+    }
+
+    fn jungle_meta(
+        winrate: f64,
+        games: i64,
+        pickrate: f64,
+        pct_lane: f64,
+        default_lane: &str,
+    ) -> RoleMeta {
+        RoleMeta {
+            winrate,
+            pickrate,
+            banrate: 1.0,
+            games,
+            pct_lane,
+            default_lane: default_lane.into(),
+        }
+    }
+
+    /// Shaped after real Lolalytics jungle rows: Zyra posts a jungle win rate
+    /// off a third of her games and a 1.4% pick rate, while Sejuani and Wukong
+    /// are natives who are picked by everyone.
+    fn seed_jungle_pool(db: &StatsDb) {
+        db.upsert_role_stat(
+            ZYRA,
+            "jungle",
+            RANK,
+            PATCH,
+            &jungle_meta(53.0, 28_762, 1.39, 34.05, "support"),
+        )
+        .unwrap();
+        db.upsert_role_stat(
+            SEJUANI,
+            "jungle",
+            RANK,
+            PATCH,
+            &jungle_meta(53.0, 41_919, 2.02, 83.81, "jungle"),
+        )
+        .unwrap();
+        db.upsert_role_stat(
+            WUKONG,
+            "jungle",
+            RANK,
+            PATCH,
+            &jungle_meta(52.5, 128_290, 6.18, 84.20, "jungle"),
+        )
+        .unwrap();
+    }
+
+    fn jungle_draft() -> DraftView {
+        DraftView {
+            role: "jungle".into(),
+            ..Default::default()
+        }
+    }
+
+    fn score_of(recs: &[Recommendation], id: i64) -> f64 {
+        recs.iter()
+            .find(|r| r.champion_id == id)
+            .map(|r| r.score)
+            .expect("champion should be ranked")
     }
 
     fn support_meta(winrate: f64, games: i64) -> RoleMeta {
@@ -1143,5 +1325,143 @@ mod tests {
                 || r.champion_id == JANNA
                 || r.champion_id == BRAUM
         }));
+    }
+
+    #[test]
+    fn role_baseline_follows_the_role_not_a_flat_fifty() {
+        let pool = vec![
+            (JINX, bot_meta(53.0, 80_000, 96.0)),
+            (CAITLYN, bot_meta(52.0, 100_000, 98.0)),
+        ];
+        let baseline = role_baseline(&pool);
+        assert!(
+            (baseline - 52.444).abs() < 0.01,
+            "games-weighted mean should be 52.44, got {baseline}"
+        );
+        assert_eq!(role_baseline(&[]), PRIOR_WR, "empty pool falls back to 50");
+    }
+
+    #[test]
+    fn a_big_win_rate_on_a_thin_sample_loses_to_a_proven_one() {
+        let db = StatsDb::open_memory().unwrap();
+        // Raw deltas would put Twitch (+6.0) miles ahead of Jinx (+3.0).
+        db.upsert_role_stat(TWITCH, "bottom", RANK, PATCH, &bot_meta(56.0, 200, 80.0))
+            .unwrap();
+        db.upsert_role_stat(JINX, "bottom", RANK, PATCH, &bot_meta(53.0, 80_000, 96.0))
+            .unwrap();
+        db.upsert_role_stat(
+            CAITLYN,
+            "bottom",
+            RANK,
+            PATCH,
+            &bot_meta(52.0, 100_000, 98.0),
+        )
+        .unwrap();
+        db.upsert_role_stat(
+            MISS_FORTUNE,
+            "bottom",
+            RANK,
+            PATCH,
+            &bot_meta(51.5, 90_000, 90.0),
+        )
+        .unwrap();
+
+        let catalog = test_catalog();
+        let ctx = ctx_with_pickable(&[TWITCH, JINX, CAITLYN, MISS_FORTUNE]);
+        let recs = recommend(&db, &catalog, &empty_draft(), &ctx);
+        let twitch = recs
+            .iter()
+            .position(|r| r.champion_id == TWITCH)
+            .expect("twitch ranked");
+        let jinx = recs
+            .iter()
+            .position(|r| r.champion_id == JINX)
+            .expect("jinx ranked");
+        assert!(
+            jinx < twitch,
+            "200 games at 56% must not outrank 80k games at 53%: {recs:?}"
+        );
+    }
+
+    #[test]
+    fn niche_off_role_pick_loses_to_a_native_at_equal_win_rate() {
+        let db = StatsDb::open_memory().unwrap();
+        seed_jungle_pool(&db);
+        let catalog = test_catalog();
+        let ctx = ctx_with_pickable(&[ZYRA, SEJUANI, WUKONG]);
+        let recs = recommend(&db, &catalog, &jungle_draft(), &ctx);
+        let zyra = recs
+            .iter()
+            .position(|r| r.champion_id == ZYRA)
+            .expect("zyra ranked");
+        let sejuani = recs
+            .iter()
+            .position(|r| r.champion_id == SEJUANI)
+            .expect("sejuani ranked");
+        assert!(
+            sejuani < zyra,
+            "at the same win rate the jungle native should lead the visiting one-trick pick: {recs:?}"
+        );
+        let zyra_reason = &recs[zyra].reason;
+        assert!(
+            zyra_reason.contains("niche jungle pick"),
+            "the discount should be explained on the card: {zyra_reason}"
+        );
+    }
+
+    #[test]
+    fn a_one_trick_keeps_their_niche_pick() {
+        let db = StatsDb::open_memory().unwrap();
+        seed_jungle_pool(&db);
+        let catalog = test_catalog();
+
+        let ctx = ctx_with_pickable(&[ZYRA, SEJUANI, WUKONG]);
+        let stranger = recommend(&db, &catalog, &jungle_draft(), &ctx);
+
+        let mut ctx = ctx_with_pickable(&[ZYRA, SEJUANI, WUKONG]);
+        ctx.mastery.insert(ZYRA, (7, 1_000_000));
+        let one_trick = recommend(&db, &catalog, &jungle_draft(), &ctx);
+
+        let gained = score_of(&one_trick, ZYRA) - score_of(&stranger, ZYRA);
+        assert!(
+            gained > 0.05 * 0.15,
+            "mastery should lift Zyra by more than the comfort term alone, gained {gained}"
+        );
+        assert_eq!(
+            one_trick[0].champion_id, ZYRA,
+            "a Zyra one-trick should get Zyra back: {one_trick:?}"
+        );
+    }
+
+    #[test]
+    fn specialist_skew_ignores_columns_an_old_cache_never_filled() {
+        let blank = RoleMeta {
+            winrate: 53.0,
+            pickrate: 0.0,
+            banrate: 0.0,
+            games: 20_000,
+            pct_lane: 0.0,
+            default_lane: String::new(),
+        };
+        assert_eq!(
+            specialist_skew(&blank, "jungle"),
+            0.0,
+            "missing pick rate and lane share must not read as maximum skew"
+        );
+    }
+
+    #[test]
+    fn recommendations_carry_the_sample_behind_the_win_rate() {
+        let db = StatsDb::open_memory().unwrap();
+        seed_jungle_pool(&db);
+        let catalog = test_catalog();
+        let ctx = ctx_with_pickable(&[ZYRA, SEJUANI, WUKONG]);
+        let recs = recommend(&db, &catalog, &jungle_draft(), &ctx);
+        let zyra = recs
+            .iter()
+            .find(|r| r.champion_id == ZYRA)
+            .expect("zyra ranked");
+        assert_eq!(zyra.meta_games, Some(28_762));
+        assert_eq!(zyra.meta_pickrate, Some(1.39));
     }
 }
