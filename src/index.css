@@ -91,6 +91,34 @@ body,
   }
 }
 
+.update-action {
+  cursor: pointer;
+  background: transparent;
+}
+
+.update-action:disabled {
+  cursor: default;
+  pointer-events: none;
+}
+
+.update-action-title {
+  color: var(--color-gold);
+  transition: color 160ms ease;
+}
+
+.update-action-body {
+  color: #d2c3a0;
+  transition: color 160ms ease;
+}
+
+.update-action:hover .update-action-title {
+  color: var(--color-gold-2);
+}
+
+.update-action:hover .update-action-body {
+  color: var(--color-gold);
+}
+
 .switch {
   appearance: none;
   width: 1.75rem;

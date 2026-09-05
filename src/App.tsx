@@ -255,14 +255,12 @@ function UpdateBanner({
     <div className="hex-frame mb-4 flex items-start gap-2 rounded-2xl bg-[#1a1608]/55 p-4">
       <button
         type="button"
-        className="group min-w-0 flex-1 cursor-pointer text-left disabled:cursor-default disabled:pointer-events-none"
+        className="update-action min-w-0 flex-1 text-left"
         onClick={onDownload}
         disabled={downloading}
       >
-        <div className="text-sm font-medium text-gold transition-colors group-hover:text-gold-2">
-          {update.message}
-        </div>
-        <div className="mt-0.5 text-[11px] leading-snug text-[#d2c3a0] transition-colors group-hover:text-gold">
+        <div className="update-action-title text-sm font-medium">{update.message}</div>
+        <div className="update-action-body mt-0.5 text-[11px] leading-snug">
           {downloading
             ? "Saving the installer to your Downloads folder"
             : update.status === "ready"
