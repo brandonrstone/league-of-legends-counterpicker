@@ -32,6 +32,8 @@ export type Recommendation = {
   teamDelta: number | null;
   synergyDelta: number | null;
   metaWr: number | null;
+  metaGames: number | null;
+  metaPickrate: number | null;
 };
 
 export type AppSnapshot = {

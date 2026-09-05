@@ -52,6 +52,20 @@ function signed(n: number | null) {
   return `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`;
 }
 
+function compactGames(n: number) {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 10_000) return `${Math.round(n / 1_000)}k`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return `${n}`;
+}
+
+function sampleLine(rec: Recommendation) {
+  if (!rec.metaGames) return null;
+  const parts = [`${compactGames(rec.metaGames)} games`];
+  if (rec.metaPickrate) parts.push(`${rec.metaPickrate.toFixed(1)}% pick`);
+  return parts.join(" · ");
+}
+
 export default function App() {
   const [snap, setSnap] = useState<AppSnapshot>(emptySnap);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -414,6 +428,7 @@ function TeamRow({ title, slots, ally }: { title: string; slots: ChampionSlot[];
 }
 
 function RecCard({ rec, rank, active }: { rec: Recommendation; rank: number; active: boolean }) {
+  const sample = sampleLine(rec);
   return (
     <article
       className={`hex-frame flex gap-3 rounded-2xl p-3 ${active ? "pulse-gold" : ""}`}
@@ -435,6 +450,7 @@ function RecCard({ rec, rank, active }: { rec: Recommendation; rank: number; act
           <span>Team {signed(rec.teamDelta)}</span>
           <span>WR {rec.metaWr?.toFixed(1) ?? "—"}%</span>
         </div>
+        {sample ? <div className="mt-0.5 text-[10px] text-[#7d7159]">{sample}</div> : null}
       </div>
     </article>
   );
