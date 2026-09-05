@@ -50,6 +50,8 @@ pub struct Recommendation {
     pub team_delta: Option<f64>,
     pub synergy_delta: Option<f64>,
     pub meta_wr: Option<f64>,
+    pub meta_games: Option<i64>,
+    pub meta_pickrate: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

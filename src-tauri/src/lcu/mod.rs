@@ -123,30 +123,17 @@ impl LcuHttp {
             .collect())
     }
 
-    pub async fn ranked_tier(&self) -> Option<String> {
+    pub async fn current_queue_id(&self) -> Option<i64> {
+        let session: GameflowSession = self.get_json("/lol-gameflow/v1/session").await.ok()?;
+        (session.game_data.queue.id > 0).then_some(session.game_data.queue.id)
+    }
+
+    pub async fn ranked_tier(&self, queue_id: Option<i64>) -> Option<String> {
         let stats: RankedStats = self
             .get_json("/lol-ranked/v1/current-ranked-stats")
             .await
             .ok()?;
-        if let Some(entry) = stats.highest_ranked_entry {
-            if !entry.tier.is_empty() {
-                return Some(entry.tier);
-            }
-        }
-        if let Some(map) = stats.queue_map.as_object() {
-            for key in ["RANKED_SOLO_5x5", "RANKED_FLEX_SR"] {
-                if let Some(tier) = map
-                    .get(key)
-                    .and_then(|v| v.get("tier"))
-                    .and_then(|v| v.as_str())
-                {
-                    if !tier.is_empty() && tier != "NONE" {
-                        return Some(tier.to_string());
-                    }
-                }
-            }
-        }
-        None
+        tier_for_queue(&stats, queue_id)
     }
 
     pub async fn champion_masteries(&self) -> Result<Vec<ChampionMastery>> {
@@ -163,6 +150,42 @@ impl LcuHttp {
         ))
         .await
     }
+}
+
+pub const RANKED_SOLO_QUEUE: i64 = 420;
+pub const RANKED_FLEX_QUEUE: i64 = 440;
+
+fn queue_map_tier(stats: &RankedStats, key: &str) -> Option<String> {
+    let tier = stats
+        .queue_map
+        .as_object()?
+        .get(key)?
+        .get("tier")?
+        .as_str()?;
+    (!tier.is_empty() && !tier.eq_ignore_ascii_case("NONE")).then(|| tier.to_string())
+}
+
+/// The rank to read stats at. A player who is Diamond in flex and Gold in solo
+/// should not be shown Diamond numbers in a solo game, so the queue being played
+/// wins over the highest rank held. Anything else (normals, unrated) falls back
+/// to the best rank on the account.
+pub fn tier_for_queue(stats: &RankedStats, queue_id: Option<i64>) -> Option<String> {
+    let preferred = match queue_id {
+        Some(RANKED_SOLO_QUEUE) => Some("RANKED_SOLO_5x5"),
+        Some(RANKED_FLEX_QUEUE) => Some("RANKED_FLEX_SR"),
+        _ => None,
+    };
+    if let Some(tier) = preferred.and_then(|key| queue_map_tier(stats, key)) {
+        return Some(tier);
+    }
+    if let Some(entry) = stats.highest_ranked_entry.as_ref() {
+        if !entry.tier.is_empty() && !entry.tier.eq_ignore_ascii_case("NONE") {
+            return Some(entry.tier.clone());
+        }
+    }
+    ["RANKED_SOLO_5x5", "RANKED_FLEX_SR"]
+        .into_iter()
+        .find_map(|key| queue_map_tier(stats, key))
 }
 
 pub async fn connect_ws(
@@ -423,5 +446,70 @@ mod tests {
         assert_eq!(draft.enemies[0].display_champion_id, 51);
         assert_eq!(draft.allies[1].display_champion_id, 27);
         assert_eq!(draft.enemies_locked, 1);
+    }
+
+    fn split_ranks() -> RankedStats {
+        RankedStats {
+            queue_map: serde_json::json!({
+                "RANKED_SOLO_5x5": { "tier": "GOLD" },
+                "RANKED_FLEX_SR": { "tier": "DIAMOND" },
+            }),
+            highest_ranked_entry: Some(super::types::RankedEntry {
+                tier: "DIAMOND".into(),
+                division: "II".into(),
+                queue_type: "RANKED_FLEX_SR".into(),
+            }),
+        }
+    }
+
+    #[test]
+    fn queue_decides_which_rank_the_stats_come_from() {
+        let stats = split_ranks();
+        assert_eq!(
+            tier_for_queue(&stats, Some(RANKED_SOLO_QUEUE)).as_deref(),
+            Some("GOLD"),
+            "a solo game should not be scored on a flex Diamond rank"
+        );
+        assert_eq!(
+            tier_for_queue(&stats, Some(RANKED_FLEX_QUEUE)).as_deref(),
+            Some("DIAMOND")
+        );
+    }
+
+    #[test]
+    fn unranked_queues_fall_back_to_the_best_rank_held() {
+        let stats = split_ranks();
+        assert_eq!(
+            tier_for_queue(&stats, None).as_deref(),
+            Some("DIAMOND"),
+            "normals have no rank of their own"
+        );
+    }
+
+    #[test]
+    fn unplayed_queue_falls_through_instead_of_reporting_nothing() {
+        let stats = RankedStats {
+            queue_map: serde_json::json!({
+                "RANKED_SOLO_5x5": { "tier": "NONE" },
+                "RANKED_FLEX_SR": { "tier": "PLATINUM" },
+            }),
+            highest_ranked_entry: None,
+        };
+        assert_eq!(
+            tier_for_queue(&stats, Some(RANKED_SOLO_QUEUE)).as_deref(),
+            Some("PLATINUM"),
+            "placements in solo should still borrow the flex rank"
+        );
+    }
+
+    #[test]
+    fn gameflow_session_exposes_the_queue() {
+        let session: super::types::GameflowSession = serde_json::from_value(serde_json::json!({
+            "phase": "ChampSelect",
+            "gameData": { "queue": { "id": 420 } },
+        }))
+        .unwrap();
+        assert_eq!(session.phase, "ChampSelect");
+        assert_eq!(session.game_data.queue.id, RANKED_SOLO_QUEUE);
     }
 }
