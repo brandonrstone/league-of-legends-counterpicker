@@ -1,6 +1,6 @@
 [package]
 name = "rift-counterpick"
-version = "1.0.3"
+version = "1.0.4"
 description = "League of Legends Counterpicker — live champion select overlay"
 authors = ["you"]
 edition = "2021"

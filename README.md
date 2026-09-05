@@ -52,7 +52,7 @@ You only need Node and Rust to *build*. After that it is a regular Windows app.
 1. Install [Node.js 22+](https://nodejs.org/) and [Rust](https://rustup.rs/).
 2. `npm install`
 3. `npm run build:app`
-4. Run the installer in `src-tauri/target/release/bundle/nsis/` (`League of Legends Counterpicker_1.0.3_x64-setup.exe`).
+4. Run the installer in `src-tauri/target/release/bundle/nsis/` (`League of Legends Counterpicker_1.0.4_x64-setup.exe`).
 5. Open **League of Legends Counterpicker** from the Start Menu.
 
 When you change the code later, build again and re-run the new setup. It upgrades in place.
