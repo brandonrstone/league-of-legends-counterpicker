@@ -26,6 +26,9 @@ const RARE_PICKRATE: f64 = 0.5;
 /// Most of a niche champion's win-rate edge that we are willing to discount.
 const MAX_SPECIALIST_DISCOUNT: f64 = 0.5;
 
+/// Mastery points at which a champion counts as fully comfortable.
+const COMFORT_POINTS_FULL: f64 = 100_000.0;
+
 #[derive(Clone, Debug)]
 pub struct ScoreContext {
     pub rank: String,
@@ -201,7 +204,7 @@ pub fn recommend(
             }
         };
         let comfort = if ctx.comfort_weighting {
-            comfort_score(mastery).min(0.15)
+            comfort_score(mastery)
         } else {
             0.0
         };
@@ -388,26 +391,23 @@ fn ramp(value: f64, zero_at: f64, one_at: f64) -> f64 {
 
 /// How much of a champion's win rate in this role is likely to come from the
 /// small group of people who actually play them there. A champion who is rarely
-/// picked, and rarely picked *in this lane*, posts numbers the average player
-/// will not reproduce. Both signals are skipped when the cached row has no data
-/// for them rather than being read as zero.
+/// picked, or rarely picked *in this lane*, posts numbers the average player
+/// will not reproduce. Signals are skipped when the cached row has no data for
+/// them rather than being read as zero.
+///
+/// The signals are independent alarms and the loudest one wins. Averaging them
+/// would let a champion on their home lane — who produces no lane evidence
+/// either way — dilute a real pick-rate signal with an absence.
 fn specialist_skew(meta: &RoleMeta, role: &str) -> f64 {
-    let mut signals = Vec::new();
-    if meta.pct_lane > 0.0 {
-        let native = !meta.default_lane.is_empty() && meta.default_lane == role;
-        signals.push(if native {
-            0.0
-        } else {
-            ramp(meta.pct_lane, HOME_LANE_PCT, VISITOR_LANE_PCT)
-        });
+    let native = !meta.default_lane.is_empty() && meta.default_lane == role;
+    let mut skew: f64 = 0.0;
+    if meta.pct_lane > 0.0 && !native {
+        skew = skew.max(ramp(meta.pct_lane, HOME_LANE_PCT, VISITOR_LANE_PCT));
     }
     if meta.pickrate > 0.0 {
-        signals.push(ramp(meta.pickrate, COMMON_PICKRATE, RARE_PICKRATE));
+        skew = skew.max(ramp(meta.pickrate, COMMON_PICKRATE, RARE_PICKRATE));
     }
-    if signals.is_empty() {
-        return 0.0;
-    }
-    signals.iter().sum::<f64>() / signals.len() as f64
+    skew
 }
 
 /// How much the player has actually played this champion, used to cancel the
@@ -421,13 +421,17 @@ fn familiarity(mastery: Option<(i64, i64)>) -> f64 {
     by_level.max(by_points)
 }
 
+/// Familiarity as a 0..1 score, leaning the list toward champions the player
+/// actually knows. Mastery level saturates at 7 long before points do, so the
+/// two are averaged to keep a level 7 with a million points ahead of a level 7
+/// that just crossed the threshold.
 fn comfort_score(mastery: Option<(i64, i64)>) -> f64 {
     let Some((level, points)) = mastery else {
         return 0.0;
     };
-    let level_part = (level as f64 / 7.0) * 4.0;
-    let points_part = ((points as f64 + 1.0).ln() / 12.0).min(2.0);
-    level_part + points_part
+    let by_level = (level as f64 / 7.0).clamp(0.0, 1.0);
+    let by_points = (points as f64 / COMFORT_POINTS_FULL).clamp(0.0, 1.0);
+    0.5 * by_level + 0.5 * by_points
 }
 
 fn build_reason(
@@ -512,6 +516,8 @@ mod tests {
     const THRESH: i64 = 412;
     const ZYRA: i64 = 143;
     const WUKONG: i64 = 62;
+    const TARIC: i64 = 44;
+    const LEONA: i64 = 89;
 
     fn champ(id: i64, name: &str) -> ChampionInfo {
         ChampionInfo {
@@ -538,6 +544,8 @@ mod tests {
             champ(THRESH, "Thresh"),
             champ(ZYRA, "Zyra"),
             champ(WUKONG, "Wukong"),
+            champ(TARIC, "Taric"),
+            champ(LEONA, "Leona"),
         ];
         let mut catalog = Catalog {
             patch: PATCH.to_string(),
@@ -668,6 +676,54 @@ mod tests {
             games,
             pct_lane: 92.0,
             default_lane: "support".into(),
+        }
+    }
+
+    fn support_meta_pick(winrate: f64, games: i64, pickrate: f64) -> RoleMeta {
+        RoleMeta {
+            winrate,
+            pickrate,
+            banrate: 1.0,
+            games,
+            pct_lane: 95.0,
+            default_lane: "support".into(),
+        }
+    }
+
+    /// Shaped after the live support rows behind the Taric report: a native
+    /// support posting a standout win rate that almost nobody picks, against
+    /// two natives everybody picks.
+    fn seed_taric_support_pool(db: &StatsDb) {
+        db.upsert_role_stat(
+            TARIC,
+            "support",
+            RANK,
+            PATCH,
+            &support_meta_pick(53.2, 107_000, 1.3),
+        )
+        .unwrap();
+        db.upsert_role_stat(
+            LEONA,
+            "support",
+            RANK,
+            PATCH,
+            &support_meta_pick(51.8, 710_000, 8.5),
+        )
+        .unwrap();
+        db.upsert_role_stat(
+            BRAUM,
+            "support",
+            RANK,
+            PATCH,
+            &support_meta_pick(51.7, 292_000, 3.5),
+        )
+        .unwrap();
+    }
+
+    fn support_draft() -> DraftView {
+        DraftView {
+            role: "support".into(),
+            ..Default::default()
         }
     }
 
@@ -1422,14 +1478,105 @@ mod tests {
         ctx.mastery.insert(ZYRA, (7, 1_000_000));
         let one_trick = recommend(&db, &catalog, &jungle_draft(), &ctx);
 
+        // Comfort alone tops out at the empty-draft comfort weight, so anything
+        // above that is the specialist discount being cancelled.
         let gained = score_of(&one_trick, ZYRA) - score_of(&stranger, ZYRA);
         assert!(
-            gained > 0.05 * 0.15,
+            gained > 0.05,
             "mastery should lift Zyra by more than the comfort term alone, gained {gained}"
         );
         assert_eq!(
             one_trick[0].champion_id, ZYRA,
             "a Zyra one-trick should get Zyra back: {one_trick:?}"
+        );
+    }
+
+    /// A native champion produces no lane evidence either way. Averaging that
+    /// absence in as a zero halved a real pick-rate signal, so Taric support at
+    /// 1.3% could never clear more than half the discount.
+    #[test]
+    fn a_rare_native_pick_is_discounted_like_a_visitor() {
+        let taric = support_meta_pick(53.2, 107_000, 1.3);
+        let skew = specialist_skew(&taric, "support");
+        assert!(
+            skew >= 0.5,
+            "a 1.3% pick rate should clear the one-trick threshold on its own, got {skew}"
+        );
+        assert_eq!(
+            specialist_skew(&support_meta_pick(51.8, 710_000, 8.5), "support"),
+            0.0,
+            "a commonly picked native support carries no specialist skew"
+        );
+    }
+
+    #[test]
+    fn the_rare_native_pick_explains_itself_on_the_card() {
+        let db = StatsDb::open_memory().unwrap();
+        seed_taric_support_pool(&db);
+        let catalog = test_catalog();
+        let ctx = ctx_with_pickable(&[TARIC, LEONA, BRAUM]);
+        let recs = recommend(&db, &catalog, &support_draft(), &ctx);
+        let taric = recs
+            .iter()
+            .find(|r| r.champion_id == TARIC)
+            .expect("taric ranked");
+        assert!(
+            taric.reason.contains("niche support pick"),
+            "a 1.3% pick rate should be called out: {}",
+            taric.reason
+        );
+        let leona = recs
+            .iter()
+            .find(|r| r.champion_id == LEONA)
+            .expect("leona ranked");
+        assert!(
+            !leona.reason.contains("niche"),
+            "an 8.5% pick rate is not a one-trick pick: {}",
+            leona.reason
+        );
+    }
+
+    /// The term was clamped to 0.15 after `comfort_score` returned 0.6..6.0, so
+    /// every champion the player had ever touched scored identically.
+    #[test]
+    fn comfort_is_graded_between_zero_and_one() {
+        assert_eq!(comfort_score(None), 0.0);
+        let dabbled = comfort_score(Some((1, 1_200)));
+        let one_trick = comfort_score(Some((7, 1_000_000)));
+        assert!(
+            dabbled < 0.2,
+            "1,200 points should barely register, got {dabbled}"
+        );
+        assert!(
+            one_trick > dabbled,
+            "a one-trick should outread a dabbler: {one_trick} vs {dabbled}"
+        );
+        assert!(
+            (one_trick - 1.0).abs() < f64::EPSILON,
+            "the score should top out at 1.0, got {one_trick}"
+        );
+    }
+
+    #[test]
+    fn mastery_moves_a_score_by_a_visible_amount() {
+        let db = StatsDb::open_memory().unwrap();
+        seed_support_pool(&db);
+        let catalog = test_catalog();
+        let pool = [BRAUM, JANNA, LULU, NAMI, THRESH];
+
+        let before = score_of(
+            &recommend(&db, &catalog, &support_draft(), &ctx_with_pickable(&pool)),
+            BRAUM,
+        );
+
+        let mut ctx = ctx_with_pickable(&pool);
+        ctx.mastery.insert(BRAUM, (7, 500_000));
+        let after = score_of(&recommend(&db, &catalog, &support_draft(), &ctx), BRAUM);
+
+        let gained = after - before;
+        assert!(
+            gained > 0.04,
+            "a maxed champion should gain close to the full comfort weight, gained {gained}"
         );
     }
 
