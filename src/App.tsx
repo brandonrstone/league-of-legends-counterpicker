@@ -113,13 +113,13 @@ export default function App() {
     setSnap((prev) =>
       prev.update
         ? {
-            ...prev,
-            update: {
-              ...prev.update,
-              status: "downloading",
-              message: `Downloading ${prev.update.version}…`,
-            },
-          }
+          ...prev,
+          update: {
+            ...prev.update,
+            status: "downloading",
+            message: `Downloading ${prev.update.version}…`,
+          },
+        }
         : prev,
     );
     try {
@@ -129,14 +129,14 @@ export default function App() {
       setSnap((prev) =>
         prev.update
           ? {
-              ...prev,
-              update: {
-                ...prev.update,
-                status: "ready",
-                progress: 1,
-                message: "Download started",
-              },
-            }
+            ...prev,
+            update: {
+              ...prev.update,
+              status: "ready",
+              progress: 1,
+              message: "Download started",
+            },
+          }
           : prev,
       );
     }
@@ -190,13 +190,13 @@ export default function App() {
       {!snap.lcu.connected ? (
         <EmptyState
           title="Waiting for League Client"
-          body="Open the League client and stay in a lobby. This app reads live champion select from your PC — it cannot work as a website."
+          body="Launch the League client and get into a pre-game lobby. Counterpicker will automatically appear during champion selection."
           seeking
         />
       ) : !inDraft ? (
         <EmptyState
           title="Ready for champion select"
-          body="Queue up. Recommendations update as each champion locks, weighted by your pick order and role."
+          body="Queue up. Once in a lobby, recommendations will update as champions are locked in, weighted by role and pick order."
           ready
         />
       ) : (
