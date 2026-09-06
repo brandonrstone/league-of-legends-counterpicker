@@ -53,3 +53,8 @@ export function previewCurrentVersion() {
   if (!import.meta.env.DEV) return null;
   return new URLSearchParams(window.location.search).get("asVersion");
 }
+
+export function previewEmptyState() {
+  if (!import.meta.env.DEV) return null;
+  return new URLSearchParams(window.location.search).get("empty");
+}

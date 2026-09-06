@@ -9,6 +9,7 @@
   --color-gold-2: #f0e6d2;
   --color-hex: #1e2d45;
   --animate-seek: seekPulse 2.4s ease-in-out infinite;
+  --animate-ready: readyGlow 3.8s ease-in-out infinite;
 }
 
 html,
@@ -93,8 +94,21 @@ body {
   }
 }
 
+@keyframes readyGlow {
+  0%,
+  100% {
+    opacity: 0.7;
+    box-shadow: 0 0 0 0 rgba(200, 170, 110, 0);
+  }
+  50% {
+    opacity: 1;
+    box-shadow: 0 0 12px 1px rgba(200, 170, 110, 0.26);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .animate-seek {
+  .animate-seek,
+  .animate-ready {
     animation: none;
   }
 }
