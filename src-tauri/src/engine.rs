@@ -25,6 +25,10 @@ const COMMON_PICKRATE: f64 = 3.0;
 const RARE_PICKRATE: f64 = 0.5;
 /// Most of a niche champion's win-rate edge that we are willing to discount.
 const MAX_SPECIALIST_DISCOUNT: f64 = 0.5;
+
+/// Mastery points at which a champion counts as fully comfortable.
+const COMFORT_POINTS_FULL: f64 = 100_000.0;
+
 #[derive(Clone, Debug)]
 pub struct ScoreContext {
     pub rank: String,
@@ -200,7 +204,7 @@ pub fn recommend(
             }
         };
         let comfort = if ctx.comfort_weighting {
-            comfort_score(mastery).min(0.15)
+            comfort_score(mastery)
         } else {
             0.0
         };
@@ -417,13 +421,17 @@ fn familiarity(mastery: Option<(i64, i64)>) -> f64 {
     by_level.max(by_points)
 }
 
+/// Familiarity as a 0..1 score, leaning the list toward champions the player
+/// actually knows. Mastery level saturates at 7 long before points do, so the
+/// two are averaged to keep a level 7 with a million points ahead of a level 7
+/// that just crossed the threshold.
 fn comfort_score(mastery: Option<(i64, i64)>) -> f64 {
     let Some((level, points)) = mastery else {
         return 0.0;
     };
-    let level_part = (level as f64 / 7.0) * 4.0;
-    let points_part = ((points as f64 + 1.0).ln() / 12.0).min(2.0);
-    level_part + points_part
+    let by_level = (level as f64 / 7.0).clamp(0.0, 1.0);
+    let by_points = (points as f64 / COMFORT_POINTS_FULL).clamp(0.0, 1.0);
+    0.5 * by_level + 0.5 * by_points
 }
 
 fn build_reason(
@@ -1470,9 +1478,11 @@ mod tests {
         ctx.mastery.insert(ZYRA, (7, 1_000_000));
         let one_trick = recommend(&db, &catalog, &jungle_draft(), &ctx);
 
+        // Comfort alone tops out at the empty-draft comfort weight, so anything
+        // above that is the specialist discount being cancelled.
         let gained = score_of(&one_trick, ZYRA) - score_of(&stranger, ZYRA);
         assert!(
-            gained > 0.05 * 0.15,
+            gained > 0.05,
             "mastery should lift Zyra by more than the comfort term alone, gained {gained}"
         );
         assert_eq!(
@@ -1523,6 +1533,50 @@ mod tests {
             !leona.reason.contains("niche"),
             "an 8.5% pick rate is not a one-trick pick: {}",
             leona.reason
+        );
+    }
+
+    /// The term was clamped to 0.15 after `comfort_score` returned 0.6..6.0, so
+    /// every champion the player had ever touched scored identically.
+    #[test]
+    fn comfort_is_graded_between_zero_and_one() {
+        assert_eq!(comfort_score(None), 0.0);
+        let dabbled = comfort_score(Some((1, 1_200)));
+        let one_trick = comfort_score(Some((7, 1_000_000)));
+        assert!(
+            dabbled < 0.2,
+            "1,200 points should barely register, got {dabbled}"
+        );
+        assert!(
+            one_trick > dabbled,
+            "a one-trick should outread a dabbler: {one_trick} vs {dabbled}"
+        );
+        assert!(
+            (one_trick - 1.0).abs() < f64::EPSILON,
+            "the score should top out at 1.0, got {one_trick}"
+        );
+    }
+
+    #[test]
+    fn mastery_moves_a_score_by_a_visible_amount() {
+        let db = StatsDb::open_memory().unwrap();
+        seed_support_pool(&db);
+        let catalog = test_catalog();
+        let pool = [BRAUM, JANNA, LULU, NAMI, THRESH];
+
+        let before = score_of(
+            &recommend(&db, &catalog, &support_draft(), &ctx_with_pickable(&pool)),
+            BRAUM,
+        );
+
+        let mut ctx = ctx_with_pickable(&pool);
+        ctx.mastery.insert(BRAUM, (7, 500_000));
+        let after = score_of(&recommend(&db, &catalog, &support_draft(), &ctx), BRAUM);
+
+        let gained = after - before;
+        assert!(
+            gained > 0.04,
+            "a maxed champion should gain close to the full comfort weight, gained {gained}"
         );
     }
 
