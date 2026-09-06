@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { AppSnapshot, ChampionSlot, Recommendation } from "./types";
-import { fetchGithubUpdate, previewCurrentVersion } from "./update";
+import { fetchGithubUpdate, previewCurrentVersion, previewEmptyState } from "./update";
 
 const emptySnap = (): AppSnapshot => ({
   lcu: { connected: false, summonerName: null, gameName: null, detectedRank: null },
@@ -82,6 +82,12 @@ export default function App() {
           if (update) {
             setSnap((prev) => ({ ...prev, update }));
           }
+        }
+        if (previewEmptyState() === "ready") {
+          setSnap((prev) => ({
+            ...prev,
+            lcu: { ...prev.lcu, connected: true },
+          }));
         }
       }
       unlisten = await listen<AppSnapshot>("snapshot", (event) => setSnap(event.payload));
@@ -191,6 +197,7 @@ export default function App() {
         <EmptyState
           title="Ready for champion select"
           body="Queue up. Recommendations update as each champion locks, weighted by your pick order and role."
+          ready
         />
       ) : (
         <DraftBoard snap={snap} confidence={confidence} onPatch={patchSettings} />
@@ -339,15 +346,26 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function EmptyState({ title, body, seeking = false }: { title: string; body: string; seeking?: boolean }) {
+function EmptyState({
+  title,
+  body,
+  seeking = false,
+  ready = false,
+}: {
+  title: string;
+  body: string;
+  seeking?: boolean;
+  ready?: boolean;
+}) {
+  const ringMotion = seeking ? "animate-seek" : ready ? "animate-ready" : "";
   return (
     <section className="hex-frame flex flex-1 flex-col items-center justify-center rounded-2xl px-6 py-16 text-center">
       <div className="relative mb-5 h-16 w-16">
         <div
-          className={`absolute inset-0 origin-center rounded-full border border-gold/35 bg-[#c8aa6e12] ${seeking ? "animate-seek" : ""}`}
+          className={`absolute inset-0 origin-center rounded-full border border-gold/35 bg-[#c8aa6e12] ${ringMotion}`}
         />
         <div
-          className={`absolute inset-[14px] origin-center rounded-full border border-gold/70 ${seeking ? "animate-seek [animation-delay:600ms]" : ""}`}
+          className={`absolute inset-[14px] origin-center rounded-full border border-gold/70 ${ringMotion}${seeking ? " [animation-delay:600ms]" : ""}`}
         />
       </div>
       <h2 className="font-display text-xl font-medium text-gold">{title}</h2>
