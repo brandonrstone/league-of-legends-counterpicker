@@ -175,7 +175,7 @@ export default function App() {
         />
       ) : null}
 
-      <StatusBar snap={snap} phase={phase} showVersion={settingsOpen} />
+      <StatusBar snap={snap} phase={phase} settingsOpen={settingsOpen} />
 
       {settingsOpen ? (
         <SettingsPanel snap={snap} onPatch={patchSettings} />
@@ -206,11 +206,11 @@ export default function App() {
 function StatusBar({
   snap,
   phase,
-  showVersion,
+  settingsOpen,
 }: {
   snap: AppSnapshot;
   phase: string;
-  showVersion: boolean;
+  settingsOpen: boolean;
 }) {
   return (
     <div className="hex-frame mb-4 grid grid-cols-2 gap-3 rounded-2xl p-4 text-xs">
@@ -232,7 +232,7 @@ function StatusBar({
                 : "Loading"
         }
       />
-      {showVersion ? <Stat label="App Version" value={snap.version} /> : null}
+      {settingsOpen ? <Stat label="App Version" value={snap.version} /> : null}
       <div
         className={`col-span-2 flex items-center gap-2 ${snap.stats.ingesting ? "text-gold-2" : "text-[#b9a888]"}`}
       >
@@ -241,19 +241,23 @@ function StatusBar({
             ? `${snap.stats.message}  ·  ${Math.round(snap.stats.progress * 100)}%`
             : snap.stats.message}
         </span>
-        <span aria-hidden="true" className="text-[#5f5642]">
-          ·
-        </span>
-        <button
-          type="button"
-          className="refresh-action shrink-0"
-          onClick={() => invoke("refresh_stats")}
-          disabled={snap.stats.ingesting}
-          title="Refresh stats"
-          aria-label="Refresh stats"
-        >
-          <RefreshIcon />
-        </button>
+        {settingsOpen ? (
+          <>
+            <span aria-hidden="true" className="text-[#5f5642]">
+              ·
+            </span>
+            <button
+              type="button"
+              className="refresh-action shrink-0"
+              onClick={() => invoke("refresh_stats")}
+              disabled={snap.stats.ingesting}
+              title="Refresh stats"
+              aria-label="Refresh stats"
+            >
+              <RefreshIcon />
+            </button>
+          </>
+        ) : null}
       </div>
       {snap.stats.ingesting ? (
         <div className="col-span-2 h-1 overflow-hidden rounded-full bg-[#1b2c44]">
